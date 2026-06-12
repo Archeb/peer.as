@@ -29,9 +29,13 @@ asn,name,name_en,op
 58807,移动CMIN2,,移动
 58453,移动CMI,,移动
 9808,移动CMNET,,移动
-24400,移动,China Mobile,移动
+24400,上海移动,China Mobile,移动
 56040,广东移动,Guangdong Mobile,移动
 56041,浙江移动,Zhejiang Mobile,移动
+134810,吉林移动,Jilin Mobile,移动
+56046,江苏移动,JiangSu Mobile,移动
+132525,黑龙江移动,Heilongjiang Mobile,移动
+56044,辽宁移动,Liaoning Mobile,移动
 # ── 中国教育和科研计算机网 CERNET ──
 4538,教育网CERNET,,教育
 23910,教育网CERNET2(IPv6),,教育
@@ -52,6 +56,7 @@ asn,name,name_en,op
 701,Verizon,Verizon,国际
 7018,AT&T,AT&T,国际
 3320,DTAG,Deutsche Telekom,国际
+137409,GSL,Global Secure Layer,国际
 # ── 云 / IDC 厂商(op=IDC,无专属配色)──
 # 国内云
 37963,阿里云,Alibaba Cloud,IDC
@@ -75,3 +80,6 @@ asn,name,name_en,op
 20940,Akamai,Akamai,IDC
 24940,Hetzner,Hetzner,IDC
 16276,OVH,OVH,IDC
+906,DMIT,DMIT,IDC
+61112,Akile,Akile,IDC
+212890,AetherCloud,AetherCloud,IDC
