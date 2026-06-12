@@ -6,7 +6,7 @@
 #   name_en  英文别名(可选)。英文界面优先用它;留空则前端自动从中文名滤出拉丁部分
 #            (如「电信CN2」→「CN2」),所以三大运营商的纯拉丁后缀可不填
 #   op       运营商/厂商分类。三大运营商有专属配色:电信 联通 移动;
-#            其余:教育 科技 国际 IDC(IDC=云/主机厂商,无专属配色)
+#            其余:国际 IDC 其他(均无专属配色;IDC=云/主机厂商;其他=教育/科研/政府/广电/企业等)
 #
 # 注意:这是「默认表」,config.json 里的 asn_registry 若存在会整体覆盖本表。
 # 仅作展示与下拉用,不含任何线路质量含义。
@@ -37,10 +37,10 @@ asn,name,name_en,op
 132525,黑龙江移动,Heilongjiang Mobile,移动
 56044,辽宁移动,Liaoning Mobile,移动
 # ── 中国教育和科研计算机网 CERNET ──
-4538,教育网CERNET,,教育
-23910,教育网CERNET2(IPv6),,教育
+4538,教育网CERNET,,其他
+23910,教育网CERNET2(IPv6),,其他
 # ── 中国科技网 CSTNET ──
-7497,科技网CSTNET,,科技
+7497,科技网CSTNET,,其他
 # ── 常见国际 transit ──
 1299,Arelion(Telia),Arelion,国际
 2914,NTT,NTT,国际
@@ -83,3 +83,233 @@ asn,name,name_en,op
 906,DMIT,DMIT,IDC
 61112,Akile,Akile,IDC
 212890,AetherCloud,AetherCloud,IDC
+
+# ════════ bgp.tools CN eyeball 排名补充 (2026-06-13) ════════
+# ── 中国电信(补充) ──
+140292,江苏苏州电信,,电信
+137266,湖北武汉电信,,电信
+134762,辽宁大连电信,,电信
+58461,杭州电信(IDC),,电信
+17638,天津电信,,电信
+140308,广东珠海电信,,电信
+140293,江苏常州电信,,电信
+140318,广东河源电信,,电信
+141739,重庆电信(IDC),,电信
+136199,广东电信,,电信
+134774,广东深圳电信,,电信
+131285,湖北电信,,电信
+140061,青海电信,,电信
+140486,浙江金华电信,,电信
+140485,浙江杭州电信,,电信
+140345,云南电信,,电信
+140309,广东中山电信,,电信
+58541,青岛电信(IDC),,电信
+136190,浙江金华,,电信
+4811,上海电信(IDC),,电信
+140647,贵州电信,,电信
+137692,广东电信(物联网),,电信
+140311,广东江门电信,,电信
+134419,广西北海电信,,电信
+140553,新疆电信,,电信
+135089,广州电信华南IDC,,电信
+140320,广东汕尾电信,,电信
+58563,湖北电信,,电信
+58540,山东济南电信(IDC),,电信
+23724,北京电信(IDC),,电信
+136188,宁波电信(IDC),,电信
+17897,黑龙江电信,,电信
+140319,广东清远电信,,电信
+137688,辽宁本溪电信,,电信
+142608,安徽蚌埠电信(IDC),,电信
+137689,江苏电信(物联网),,电信
+134763,广东电信,,电信
+140636,北京电信(物联网),,电信
+140638,四川电信(物联网),,电信
+134767,四川成都电信,,电信
+4816,广东电信(IDC),,电信
+63835,长沙电信(IDC),,电信
+133774,福州电信,,电信
+136191,湖北宜昌,,电信
+134766,云南电信(IDC),,电信
+134771,温州电信(IDC),,电信
+141998,甘肃兰州电信(IDC),,电信
+63838,湖南衡阳,,电信
+132225,青海电信(5G),,电信
+133776,福建泉州,,电信
+139201,江西九江(IDC),,电信
+58542,天津电信(IDC),,电信
+146966,江苏扬州电信(IDC),,电信
+58772,福建福州电信(IDC),,电信
+134773,广东广州电信,,电信
+139887,山东烟台电信(IDC),,电信
+134760,河北石家庄电信(IDC),,电信
+136195,青岛电信(IDC),,电信
+58519,电信(IDC),,电信
+151185,襄阳电信(IDC),,电信
+134765,云南电信(IDC),,电信
+134425,安徽合肥电信(IDC),,电信
+137698,黑龙江哈尔滨,,电信
+138169,广西电信(物联网),,电信
+134420,重庆电信,,电信
+137693,广西南宁电信(IDC),,电信
+136198,广东电信,,电信
+151823,中南电信(IIP),,电信
+148981,湖北十堰电信(IDC),,电信
+134768,陕西电信(IDC),,电信
+140903,河北保定电信,,电信
+58466,广东电信,,电信
+4835,电信(IDC),,电信
+38283,四川电信(IDC),,电信
+134756,南京电信(IDC),,电信
+139587,河南郑州电信(IDC),,电信
+141679,北京电信,,电信
+134238,江西电信(IDC),,电信
+140527,安徽芜湖电信(IDC),,电信
+149837,江西电信(IDC),,电信
+131325,江苏南通电信,,电信
+137695,新疆乌鲁木齐电信,,电信
+137694,新疆克州电信,,电信
+137697,扬州电信(IDC),,电信
+149178,合肥电信(南岗IDC),,电信
+137702,南京电信(IDC),,电信
+139767,电信(OA),,电信
+148969,江西电信(临空IDC),,电信
+134761,宁夏中卫电信(IDC),,电信
+134770,江苏苏州电信(IDC),,电信
+23650,江苏电信(IDC),,电信
+141771,河北张家口电信,,电信
+133775,厦门电信,,电信
+140083,安徽电信(物联网),,电信
+134772,广东东莞电信,,电信
+58539,河北廊坊,,电信
+138991,广西柳州电信(IDC),,电信
+17633,山东电信,,电信
+17799,辽宁电信,,电信
+59223,青海电信(IDC),,电信
+138950,无锡电信(IDC),,电信
+134769,江苏常州电信(IDC),,电信
+141025,辽宁沈阳电信,,电信
+150145,湖北三峡电信(IDC),,电信
+137691,黑龙江,,电信
+# ── 中国联通(补充) ──
+17623,广东深圳联通,,联通
+140726,安徽联通,,联通
+136958,广东联通(IDC),,联通
+134543,广东联通,,联通
+135061,广东联通,,联通
+136959,广东联通,,联通
+139007,内蒙古联通,,联通
+140979,上海联通(IDC),,联通
+17789,上海联通(IDC),,联通
+140717,江苏苏州联通(IDC),,联通
+45083,北京联通,,联通
+140716,江苏无锡联通(IDC),,联通
+# ── 中国移动(补充) ──
+56048,北京移动,,移动
+24444,山东移动,,移动
+24445,河南移动,,移动
+56045,江西移动,,移动
+24547,河北移动,,移动
+56047,湖南移动,,移动
+38019,天津移动,,移动
+56042,山西移动,,移动
+24138,中国铁通,China TieTong,移动
+141425,广东移动,,移动
+138407,贵州移动(IDC),,移动
+139080,四川移动(IDC),,移动
+132510,山西移动(IDC),,移动
+140105,陕西移动,,移动
+# ── 其他: 教育/科研机构(op=其他)──
+24353,CERNET2 西安交大,CERNET2 XJTU,其他
+9401,国家图书馆,National Library of China,其他
+55971,中国社科院,Chinese Academy of Social Sciences,其他
+# ── 其他: 政府/企业(op=其他)──
+17968,大庆中基石油,Daqing Zhongji Petroleum,其他
+131497,大众(中国),Volkswagen China,其他
+37970,华信公路(交通通信),Highway Communication,其他
+17775,上海科技网,Shanghai STN,其他
+17781,新华社,Xinhua News Agency,其他
+18241,国家电力信息网,State Power Information Net,其他
+135426,中兴通讯,ZTE,其他
+9389,长城互联网,China Greatwall Internet,其他
+45113,大同煤业通信,Datong Coal Group,其他
+38027,科技部信息中心,MOST Info Center,其他
+38378,博世(中国),Bosch China,其他
+24151,CNNIC,CNNIC,其他
+56012,LG(中国),LGNET China,其他
+150166,新开发银行(NDB),New Development Bank,其他
+37937,中国电子政务网,China eGovNet,其他
+9811,国务院发展研究中心,DRC State Council,其他
+23842,深圳信息网络中心,Shenzhen Info & Network Center,其他
+4859,国家信息中心,State Information Center,其他
+38057,戴尔(中国),Dell China,其他
+9807,国家统计局,National Bureau of Statistics,其他
+59073,中国银行,Bank of China,其他
+# ── 其他: 广电/有线 ISP(op=其他)──
+17962,深圳天威视讯,Shenzhen Topway,其他
+9812,东方有线,Oriental Cable,其他
+24139,华数,WASU,其他
+58834,广东广电网络,Guangdong Cable,其他
+17429,北京歌华有线,Beijing Gehua CATV,其他
+23851,重庆有线,Chongqing CNC Broadband,其他
+7641,中国广电,China Broadcasting TV Net,其他
+23771,陕西广电网络,SXBCTV,其他
+# ── 国际 ──
+55996,塞浦路斯电信(中国),Cypress Telecom China,国际
+37965,Pacnet,Pacnet,国际
+# ── 云 / IDC / 主机商(补充) ──
+55960,亚马逊AWS(北京/光环新网),AWS Beijing (Sinnet),IDC
+10111,Zeofast,Zeofast,IDC
+146813,上海随机网络,Shanghai Suiji,IDC
+24424,北京谷翔,Beijing Gu Xiang,IDC
+137718,火山引擎,Volcano Engine,IDC
+131516,金华威安,Jinhua Weian,IDC
+142111,浙江爱云,Zhejiang Aiyun,IDC
+139203,贵州贵安,Guizhou GuiAn IDC,IDC
+59019,金山云,Kingsoft Cloud,IDC
+63647,北京网聚,Beijing WangJu,IDC
+138982,湖北,Hubei Jiangxia IDC,IDC
+63531,北京百悟,Beijing BAIWU,IDC
+9814,飞博创(FibrLINK),FibrLINK,IDC
+132153,,Shu-Ma Road,IDC
+55967,百度,Baidu,IDC
+135629,亚马逊AWS(宁夏/西云数据),AWS Ningxia (NWCD),IDC
+58593,微软Azure(中国/世纪互联),Azure China,IDC
+63631,广东云基,Guangdong Cloudbase,IDC
+55992,奇虎360,Qihoo 360,IDC
+63629,汽车之家,Autohome,IDC
+63620,深圳华博,Shenzhen HuaBo,IDC
+146817,湖北飞讯,Hubei Feixun,IDC
+139220,四川,Sichuan Chuanxn IDC,IDC
+139726,广东云杰,Guangdong Yunjie,IDC
+59045,广州航导,Guangzhou Navigation,IDC
+23853,上海数据,Shanghai Data Solution,IDC
+154010,西安微世纪,Xian WeiShiJi,IDC
+45064,中关村软件园,Zhongguancun Software Park,IDC
+45101,深国投广场,SZITIC,IDC
+9308,艾波特(Abitcool),Abitcool,IDC
+10212,中企通信,China Enterprise ICT (CITIC),IDC
+23841,,Huatian,IDC
+38379,,Shanghai,IDC
+45062,网易,NetEase,IDC
+134578,富华数字,Fu Wah Digital,IDC
+45061,上海信息网络,Shanghai Info Network,IDC
+146834,四川迅游,SiChuan XunYou,IDC
+154402,Fredyun,Fredyun,IDC
+45079,万国数据(GDS),GDS,IDC
+45110,北京天威信通,Beijing Tian Wei Xin Tong,IDC
+139180,山东易讯通,Shandong eshinton,IDC
+59043,广州蓝东,Guangzhou LanDong,IDC
+58851,北京时尚,Priority of Fashion (Beijing),IDC
+133952,郑州龙领科技,Zhengzhou Longling,IDC
+24404,CNISP-Union,CNISP-Union,IDC
+23844,北京光环新网,Beijing Guanghuan Xinwang,IDC
+58862,微软(中国),Microsoft China,IDC
+137788,山西灯塔云景,Shanxi Beacon Cloudscape,IDC
+63603,环球音讯(GSS China),GSS China,IDC
+24427,讯天科技(Freecomm),Freecomm,IDC
+9939,蓝讯数通(DYXNET),DYXNET,IDC
+24413,263网络,263 Networks,IDC
+24429,阿里云,Alibaba Cloud,IDC
+63593,HeyTap(OPPO),HeyTap,IDC
+133194,上海枢纽科技,Connections Hub (Shanghai),IDC

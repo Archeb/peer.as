@@ -2,9 +2,9 @@
 import { S } from './store.svelte.js'
 import { SITE } from './site.js'
 
-const OP_CLS = { '电信': 'op-ct', '联通': 'op-cu', '移动': 'op-cm', '教育': 'op-edu', '科技': 'op-sci', '国际': 'op-intl' }
-// 运营商(op)分类的英文显示名(i18n)。op 仅 6 个固定类别, 故在前端维护译名(类似 UI 词表), 不进 config。
-const OP_EN = { '电信': 'Telecom', '联通': 'Unicom', '移动': 'Mobile', '教育': 'Education', '科技': 'Research', '国际': 'International' }
+const OP_CLS = { '电信': 'op-ct', '联通': 'op-cu', '移动': 'op-cm', '国际': 'op-intl' }
+// 运营商(op)分类的英文显示名(i18n)。op 仅几个固定类别, 故在前端维护译名(类似 UI 词表), 不进 config。
+const OP_EN = { '电信': 'Telecom', '联通': 'Unicom', '移动': 'Mobile', '国际': 'International', '其他': 'Other' }
 export const TIER1 = new Set([174, 701, 702, 1239, 1299, 2828, 2914, 3257, 3320, 3356, 3491,
   5511, 6453, 6461, 6762, 6830, 6939, 7018, 7473, 12956, 1273, 3549, 3551, 209])
 
