@@ -116,9 +116,18 @@ fi
 # export-parquet 只产数据/SSG、不拷前端（copy_web 在 build/sync-web 里），故前端步骤独立、在数据之后。
 # 默认总是 npm build：保证部署的前端永远是最新源码（消除"改了前端源却忘 build、部署旧前端"的事故类）。
 if [ "$DO_BUILD" = 1 ]; then
-  log "前端: vendor duckdb 扩展 + ipc build（npm run build + 拷 web/dist -> dist）"
+  log "前端: vendor duckdb 扩展 + RDAP bootstrap + ipc build（npm run build + 拷 web/dist -> dist）"
   scripts/vendor-duckdb-ext.sh    # 确保 public/duckdb-ext/ 就位（pinned，已存在则秒过）-> vite 拷进 dist
+  # RDAP bootstrap 自更新（IANA RFC 9224）：best-effort，IANA 拉不到就用现有内置，**不阻塞部署**。
+  # 前端已无 rdap.org 第三方兜底，故这份内置表需随部署保鲜。build 后还原源文件（git 跟踪文件，
+  # 留改动会脏 working tree → 下次 git merge --ff-only 撞 committed 更新时冲突）；本次 build 已吃到新表。
+  if scripts/vendor-rdap-bootstrap.sh >/dev/null 2>&1; then
+    log "前端: ✓ RDAP bootstrap 已自更新（IANA）"
+  else
+    log "前端: ⚠ RDAP bootstrap 自更新失败（IANA 不可达?），用现有内置继续"
+  fi
   ./ipc build --out dist
+  git -C "$PROJ" checkout -- ipcollect/web/src/lib/rdap-bootstrap.json 2>/dev/null || true
 else
   log "前端: --no-build，仅 ipc sync-web（拷已构建 web/dist -> dist）"
   ./ipc sync-web --out dist
