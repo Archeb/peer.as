@@ -14,19 +14,24 @@
     if (e.pointerType === 'touch') return            // 移动端: 原生滚动
     if (e.button !== 0) return                        // 仅左键
     justPanned = false
-    pan = { sx: e.clientX, sy: e.clientY, left: wrap.scrollLeft, top: wrap.scrollTop, moved: false }
-    wrap.setPointerCapture?.(e.pointerId)
+    // 注意: 此处**不**立刻 setPointerCapture —— 一旦捕获, 后续 click 会被重定向到 wrap,
+    // 节点 <g> 的 onclick 永不触发(纯点击失效)。改为等真正拖动(越过阈值)才捕获。
+    pan = { sx: e.clientX, sy: e.clientY, left: wrap.scrollLeft, top: wrap.scrollTop, moved: false, pid: e.pointerId }
   }
   function onPanMove(e) {
     if (!pan) return
     const dx = e.clientX - pan.sx, dy = e.clientY - pan.sy
-    if (!pan.moved && (Math.abs(dx) > 3 || Math.abs(dy) > 3)) pan.moved = true
+    if (!pan.moved && (Math.abs(dx) > 3 || Math.abs(dy) > 3)) {
+      pan.moved = true
+      wrap.setPointerCapture?.(pan.pid)              // 确认是拖动后才捕获, 保证拖出区域也能继续
+    }
+    if (!pan.moved) return                            // 阈值内: 当作点击, 不滚动也不捕获
     wrap.scrollLeft = pan.left - dx
     wrap.scrollTop = pan.top - dy
   }
   function onPanUp(e) {
     if (!pan) return
-    wrap.releasePointerCapture?.(e.pointerId)
+    if (pan.moved) wrap.releasePointerCapture?.(pan.pid)
     justPanned = pan.moved
     pan = null
   }
