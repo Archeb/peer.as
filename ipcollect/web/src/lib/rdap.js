@@ -194,6 +194,8 @@ async function httpGet(url) {
 
 async function doFetch(kind, key) {
   const ssKey = `rdap:${kind}:${key}`
+  // 读缓存: **只有成功的查询会被写入**(见下)。若旧坏条目解析/规范化失败(历史 bug 残留的 {body:null} 等),
+  // 当作未命中并**清掉它**, 走实时查询 —— 失败的请求绝不会卡在缓存里。
   try {
     const cached = sessionStorage.getItem(ssKey)
     if (cached) {
@@ -201,7 +203,9 @@ async function doFetch(kind, key) {
       if (o.whois) return parseWhois(key, o.server, o.text)   // 上次走的 WHOIS 兜底
       const n = normalize(kind, key, o.body); n.source = o.host; return n
     }
-  } catch (e) { /* ignore */ }
+  } catch (e) {
+    try { sessionStorage.removeItem(ssKey) } catch (_) { /* ignore */ }
+  }
 
   const v6 = kind === 'ip' && String(key).includes(':')
   const base = kind === 'autnum' ? asnBase(+key) : kind === 'domain' ? domainBase(key) : ipBase(String(key), v6)
@@ -216,8 +220,9 @@ async function doFetch(kind, key) {
   for (const url of tries) {
     try {
       const { body, host } = await httpGet(url)
+      const n = normalize(kind, key, body); n.source = host   // **先 normalize 成功**再写缓存: 绝不缓存无法解析的 body。
       try { sessionStorage.setItem(ssKey, JSON.stringify({ body, host })) } catch (e) { /* 配额/隐私模式忽略 */ }
-      const n = normalize(kind, key, body); n.source = host; return n
+      return n
     } catch (e) {
       lastErr = e
       if (e.status === 404) break   // 明确不存在: 停止 RDAP 重试(域名转 WHOIS 兜底)
@@ -231,6 +236,8 @@ async function doFetch(kind, key) {
       return n
     } catch (we) { /* 落到下面抛 RDAP 错 */ }
   }
+  // **失败收尾**: 清掉该 key 的任何缓存条目(本次或历史残留), 保证下次是干净的实时重试, 不会"永远返回错误"。
+  try { sessionStorage.removeItem(ssKey) } catch (e) { /* ignore */ }
   throw lastErr || new Error('RDAP fetch failed')
 }
 
