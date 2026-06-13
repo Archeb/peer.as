@@ -3,16 +3,16 @@
   // model: { target, probes:[...] } ; onpick: (q)=>void(点跳/靶标转发查询) ; onhover: (probeId|null)=>void
   import { onMount } from 'svelte'
   import { createTraceGlobe } from '../lib/traceglobe.js'
-  import { ccLatLon } from '../lib/geo.js'
+  import { ccLatLon, fetchTrace } from '../lib/geo.js'
 
   let { model = null, locations = null, focusId = null, hold = false, mode2d = false, onpick = null, onhover = null, onlochover = null, onengine = null } = $props()
 
   let canvasEl, hitEl, tipEl, ctrl
-  // 初始视角定位到用户所在国家/地区: Cloudflare trace(cf-ns.com)取 loc=国家码 → 国家质心经纬度。
+  // 初始视角定位到用户所在国家/地区: 用自有域 default.peer.as 的 trace 取 loc=国家码 → 国家质心经纬度。
+  // (改自第三方 cf-ns.com, 统一只打自有 Cloudflare 端点。)
   function locateHome() {
-    fetch('https://www.cf-ns.com/cdn-cgi/trace').then(r => r.ok ? r.text() : null).then(txt => {
-      const cc = txt && txt.match(/^loc=([A-Za-z]{2})/m)?.[1]
-      if (cc) { const c = ccLatLon(cc); ctrl?.setHome(c.lon, c.lat) }
+    fetchTrace().then(tr => {
+      if (tr?.cc) { const c = ccLatLon(tr.cc); ctrl?.setHome(c.lon, c.lat) }
     }).catch(() => { /* 定位失败: 保持默认初始朝向 */ })
   }
   onMount(() => {

@@ -12,7 +12,7 @@
   import Fa from 'svelte-fa'
   import { S } from '../lib/store.svelte.js'
   import { t } from '../lib/i18n.js'
-  import { probeEgressIps, probeStun } from '../lib/geo.js'
+  import { probeHomeIps, probeEgressIps, probeStun } from '../lib/geo.js'
   import { probeIp, openProbe, collapseProbe } from '../lib/queries.js'
   import { holderOrg } from '../lib/rdap.js'
   import { iVisible, iLowvis, iLoc } from '../lib/icons.js'
@@ -35,7 +35,7 @@
   function srcCat(name) {
     if (!name) return 'other'
     if (name.startsWith('STUN')) return 'stun'                 // WebRTC/STUN 一类
-    if (name.startsWith('IPv4') || name.startsWith('IPv6')) return 'direct'   // 直连/单栈探测一类
+    if (name.startsWith('IPv4') || name.startsWith('IPv6') || name === 'PEER.AS') return 'direct'   // 直连/单栈/自有域探测一类
     return SRC_CAT[name] || 'other'
   }
   const srcColor = (name) => CAT_COLOR[srcCat(name)]
@@ -71,35 +71,54 @@
     { fam: 'ip6', label: 'IPv6', accent: '#9333ea', entries: [], front: 0 },   // 紫
   ])
 
-  onMount(async () => {
-    // onSource(ip, source): 每个端点每看到一次出口 IP 就回调(带来源品牌名)。
-    //  · 新 IP → 立刻插卡 + 异步库内富集(prefix/ASN/geo)在原地补;
-    //  · 已有该 IP → 只把来源累加进 sources(展开详情显示"来源 +N")。
-    const onSource = (ip, src) => {                               // src = { name, host }
-      const fi = ip.includes(':') ? 1 : 0
-      const cur = fams[fi].entries
-      const idx = cur.findIndex(e => e.ip === ip)
-      if (idx >= 0) {                                              // 已有: 累加来源(按 name 去重)
-        const s = cur[idx].sources
-        if (!s.some(x => x.name === src.name)) fams[fi].entries[idx].sources = [...s, src]
-        return
-      }
-      if (cur.length >= 4) return                                 // 每族最多 4 张(顶 + 露 3 角)
-      const ei = cur.length
-      fams[fi].entries = [...cur, { ip, enriching: true, info: null, holder: '', sources: [src] }]
-      reveal(fams[fi].fam + ':' + ip)                             // 排程入场动画(下一帧落入叠堆)
-      probeIp(ip).then((info) => {
-        fams[fi].entries[ei].info = info; fams[fi].entries[ei].enriching = false
-        const px = info && info.prefix
-        if (px) holderOrg(px).then(h => { if (h) fams[fi].entries[ei].holder = h })
-      }).catch(() => { fams[fi].entries[ei].enriching = false })
+  // onSource(ip, source): 每个端点每看到一次出口 IP 就回调(带来源品牌名)。提到组件作用域,
+  // 让首页最小探测与(点开后的)完整探测共用同一汇入口。
+  //  · 新 IP → 立刻插卡 + 异步库内富集(prefix/ASN/geo)在原地补;
+  //  · 已有该 IP → 只把来源累加进 sources(展开详情显示"来源 +N")。
+  const onSource = (ip, src) => {                                // src = { name, host }
+    const fi = ip.includes(':') ? 1 : 0
+    const cur = fams[fi].entries
+    const idx = cur.findIndex(e => e.ip === ip)
+    if (idx >= 0) {                                              // 已有: 累加来源(按 name 去重)
+      const s = cur[idx].sources
+      if (!s.some(x => x.name === src.name)) fams[fi].entries[idx].sources = [...s, src]
+      return
     }
-    // HTTP 多端点 + WebRTC/STUN 泄漏 并行; 两者都用同一 onSource 汇入(STUN 能暴露 HTTP 看不到的泄漏 IP)。
+    if (cur.length >= 4) return                                  // 每族最多 4 张(顶 + 露 3 角)
+    const ei = cur.length
+    fams[fi].entries = [...cur, { ip, enriching: true, info: null, holder: '', sources: [src] }]
+    reveal(fams[fi].fam + ':' + ip)                              // 排程入场动画(下一帧落入叠堆)
+    probeIp(ip).then((info) => {
+      fams[fi].entries[ei].info = info; fams[fi].entries[ei].enriching = false
+      const px = info && info.prefix
+      if (px) holderOrg(px).then(h => { if (h) fams[fi].entries[ei].holder = h })
+    }).catch(() => { fams[fi].entries[ei].enriching = false })
+  }
+
+  // 首页最小探测: **只**打自有 Cloudflare 域(default.peer.as 活跃出口 + ipv4.peer.as 的 v4 出口),
+  // 不向任何第三方发请求。给出基础的"你的接入"卡片, 邀请用户点开看完整出口。
+  async function runHomeProbe() {
+    const { defaultIp: dip } = await probeHomeIps(onSource)
+    if (dip) defaultIp = dip
+    probing = false
+    maybeSettle()
+  }
+  // 完整多出口发现: 30+ 第三方边缘端点(cdn-cgi/trace 等) + WebRTC/STUN 泄漏探测。
+  // **仅当用户主动点开 IPv4/IPv6(摊开)时才跑**, 且整页只跑一次。
+  let fullProbed = false
+  async function runFullProbe() {
+    if (fullProbed) return
+    fullProbed = true
+    probing = true
     const [r] = await Promise.all([probeEgressIps(onSource), probeStun(onSource)])
     probing = false                 // HTTP + STUN 全部结束
-    defaultIp = r.defaultIp          // 用 HTTP 票数确定活跃(浏览器主用)协议栈的高亮
-    maybeSettle()                    // probe 全完: 若飞入也已派发完, 排定结算(展成露角叠堆)
-  })
+    if (r && r.defaultIp) defaultIp = r.defaultIp   // 用 HTTP 票数确定活跃(浏览器主用)协议栈的高亮
+    maybeSettle()
+  }
+
+  onMount(() => { runHomeProbe() })                 // 首页: 永远只跑最小探测
+  // 用户点开 IPv4/IPv6(摊开, expanded → true; 含深链直达 /probe)时, 懒触发一次完整探测。
+  $effect(() => { if (S.probeExpanded) runFullProbe() })
 
   const stop = (e) => e.stopPropagation()
   // 隐藏态: 把每个十六进制位换成 'x'(保留 . : / 分隔符与位数), 真实 IP 不进 DOM, 截图/取证也无法还原。

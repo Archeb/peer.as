@@ -271,6 +271,27 @@ function normalizeIp(ip) {
   return ip.includes(':') ? canonV6(ip) : canonV4(ip)
 }
 
+// ── 首页最小探测(仅自有 Cloudflare 域, 隐私优先)─────────────────────────
+// 首页只请求我们自己的两个 Cloudflare 端点: default.peer.as(活跃栈出口) + ipv4.peer.as(强制 v4 出口),
+// **绝不在首页向任何第三方域名发请求**。完整的多出口发现(probeEgressIps + STUN, 含第三方 cdn-cgi/trace)
+// 留到用户主动点开 IPv4/IPv6 时才跑。onSource 回调与 probeEgressIps 同构, 组件可共用同一汇入口。
+const OWN_TRACE = [
+  { url: TRACE_URL, name: 'PEER.AS' },                            // default.peer.as: 活跃栈(浏览器优选)出口
+  { url: 'https://ipv4.peer.as/cdn-cgi/trace', name: 'PEER.AS' },  // ipv4.peer.as: 强制 v4 出口(A-only 主机)
+]
+export async function probeHomeIps(onSource) {
+  const hostOf = (u) => { try { return new URL(u).host } catch (e) { return u } }
+  let defaultIp = null
+  await Promise.all(OWN_TRACE.map(async (s, i) => {
+    const ip0 = await traceIp(s.url)
+    if (!ip0) return
+    const ip = normalizeIp(ip0)
+    if (i === 0) defaultIp = ip                                  // default.peer.as = 活跃栈出口
+    if (onSource) { try { onSource(ip, { name: s.name, host: hostOf(s.url) }) } catch (e) { /* UI 回调异常不拖累探测 */ } }
+  }))
+  return { defaultIp }
+}
+
 // onSource(ip, {name, host}): 每个端点每看到一次出口 IP 就回调一次(带来源品牌名 + 实际 host)。
 // 同一 IP 可被多个端点看到 → 组件据此建卡 + 累加来源(展开详情显示"来源 +N", host 走 tooltip)。
 // 不必等所有端点(含慢/超时的)跑完。返回值是全部端点跑完后的汇总(defaultIp = 被最多端点看到的)。
