@@ -441,12 +441,17 @@ export async function showInsight(pid, prefix) {
     // RPKI/IRR: 代表 origin 状态 + MOAS 每 origin 数组(与 origin_asns 对齐)。门控缺列不 SELECT。
     const statCols = (S.meta?.has_rpki ? ', rpki, origin_rpki' : '') + (S.meta?.has_irr ? ', irr, origin_irr' : '')
     det = (await q(`SELECT prefix, plen, origin_asn, n_origins${moasCols}${statCols}, n_paths, cc, city, province FROM ${src} WHERE pid=${pid} LIMIT 1`))[0]
-    paths = await q(`SELECT path_arr, path_len, n_peers, is_best FROM ${rpList(pathsFileFor(pid))} WHERE pid=${pid} ORDER BY path_len ASC, n_peers DESC`)
+    paths = await q(`SELECT path_arr, path_arr_raw, path_len, n_peers, is_best FROM ${rpList(pathsFileFor(pid))} WHERE pid=${pid} ORDER BY path_len ASC, n_peers DESC`)
   } catch (e) { S.insight = { error: e.message }; return }
   if (!det) { S.insight = { error: 'not found' }; return }
   const rng = v6 ? ip6Range(det.prefix) : ip2range(det.prefix)
   const [sup, sub] = rng ? await relData(pid, rng.start, rng.end, v6) : [[], []]
-  const pmap = paths.map(p => ({ asns: Array.from(p.path_arr || []).map(Number), peers: p.n_peers, is_best: p.is_best }))
+  // asns = clean(供路由图拓扑/origin 聚合/路径搜索, 无连续自环); asnsRaw = 含 prepend 的原始数组, 仅展示用(AsPath 折叠成 ×N)。
+  const pmap = paths.map(p => ({
+    asns: Array.from(p.path_arr || []).map(Number),
+    asnsRaw: p.path_arr_raw ? Array.from(p.path_arr_raw).map(Number) : null,
+    peers: p.n_peers, is_best: p.is_best,
+  }))
   // MOAS 全部 origin: 优先用 prefixes 的 origin_asns/origin_npaths 数组(权威完整, 不受 PATH_CAP 截断);
   // 缺数组时(单源前缀 / 旧数据)退化为从去重路径末端 AS 聚合(可能不全 -> 由 +N… 提示)。
   let origins
