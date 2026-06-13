@@ -494,7 +494,7 @@
               {/each}
             </div>
           {/if}
-          <div class="poweredby">Powered by <a href="https://globalping.io" target="_blank" rel="noopener noreferrer">Globalping</a></div>
+          <div class="poweredby">Powered by <a href="https://globalping.io" target="_blank" rel="noopener noreferrer">Globalping</a> × <a href="https://www.nxtrace.org" target="_blank" rel="noopener noreferrer">NextTrace</a></div>
         </div>
       {/if}
 
