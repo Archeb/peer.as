@@ -2,8 +2,35 @@
   import { truncToTier1, asnName, TIER1 } from '../lib/bgp.js'
   import { showAsn } from '../lib/queries.js'
   let { rec } = $props()
-  const go = asn => showAsn(asn)
   const goKey = (e, asn) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); showAsn(asn) } }
+
+  // ── 手型拖拽平移(桌面) ──
+  // PC 上原本只能拖底部滚动条, 很难用; 改成在图上按住直接左右/上下拖。
+  // 触摸设备走浏览器原生滚动(pointerdown 直接 return), 不动它, 保持移动端兼容。
+  let wrap = $state(null)
+  let pan = null            // 拖拽中: { sx, sy, left, top, moved }
+  let justPanned = false    // 刚发生过拖拽 → 吞掉随后的节点 click, 避免误触导航
+  function onPanDown(e) {
+    if (e.pointerType === 'touch') return            // 移动端: 原生滚动
+    if (e.button !== 0) return                        // 仅左键
+    justPanned = false
+    pan = { sx: e.clientX, sy: e.clientY, left: wrap.scrollLeft, top: wrap.scrollTop, moved: false }
+    wrap.setPointerCapture?.(e.pointerId)
+  }
+  function onPanMove(e) {
+    if (!pan) return
+    const dx = e.clientX - pan.sx, dy = e.clientY - pan.sy
+    if (!pan.moved && (Math.abs(dx) > 3 || Math.abs(dy) > 3)) pan.moved = true
+    wrap.scrollLeft = pan.left - dx
+    wrap.scrollTop = pan.top - dy
+  }
+  function onPanUp(e) {
+    if (!pan) return
+    wrap.releasePointerCapture?.(e.pointerId)
+    justPanned = pan.moved
+    pan = null
+  }
+  const go = asn => { if (justPanned) return; showAsn(asn) }
 
   const NW = 120, NH = 34, COLG = 56, ROWG = 14
   function bezier(x1, y1, x2, y2, cls, sw) {
@@ -71,7 +98,9 @@
 </script>
 
 {#if g}
-  <div class="graphwrap">
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <div class="graphwrap" class:grabbing={!!pan} bind:this={wrap}
+       onpointerdown={onPanDown} onpointermove={onPanMove} onpointerup={onPanUp} onpointercancel={onPanUp}>
     <svg viewBox="0 0 {g.W} {g.H}" width={g.W} height={g.H} class="pathsvg">
       {#each g.edges as e}<path d={e.d} class={e.cls} stroke-width={e.sw} fill="none" />{/each}
       {#each g.boxes as b}
@@ -88,7 +117,8 @@
 {/if}
 
 <style>
-  .graphwrap { overflow: auto; border: 1px solid var(--line); border-radius: 8px; background: var(--alt); padding: 6px; }
+  .graphwrap { overflow: auto; border: 1px solid var(--line); border-radius: 8px; background: var(--alt); padding: 6px; cursor: grab; }
+  .graphwrap.grabbing { cursor: grabbing; user-select: none; }
   .pathsvg { display: block; max-width: none; }
   :global(.gedge) { stroke: var(--muted); opacity: .4; fill: none; }
   :global(.gmain) { stroke: var(--accent); opacity: .8; }
