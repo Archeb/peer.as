@@ -6,6 +6,15 @@ PEER.AS 的功能更新记录。仅记录**面向用户的功能性变更**（�
 Feature-level changelog for PEER.AS. Only **user-facing functional changes** are listed
 (new features, visible behavior changes); pure maintenance/refactors/data refreshes are omitted. Newest first.
 
+## 2026-06-13
+
+- **新增：AS_PATH 显示并标注 prepend（`ASN ×N`）。** 详情面板的观测路径列表现在**保留 AS prepend**——某个 AS 在路径里连续出现多次会折叠成 `ASN ×N`，悬停提示「AS prepend ×N」。prepend 是各网络表达**入向流量工程（inbound TE）**的信号，之前被折叠丢掉了，现在能看到了。
+  **Added: AS_PATH now shows & annotates prepends (`ASN ×N`).** The observed-path list in the detail panel **preserves AS prepends** — an AS repeated consecutively folds into `ASN ×N` with an «AS prepend ×N» tooltip. Prepends are how networks express **inbound traffic engineering**; they were previously collapsed away and are now visible.
+- **改进：采集点 2 → 4，回程可见性更全。** 新增 RIPE RIS **rrc03**（阿姆斯特丹 AMS-IX）与 RouteViews **route-views2**（美国 Oregon）两个采集点，与原有的 rrc01（伦敦）/ rrc06（东京）互补。可见的 AS 互联关系（邻接边）增加约 **22%**、去重路径增加约 **90%**，更多 transit 与 IXP 路径能被观测到。
+  **Improved: 2 → 4 collection points for broader back-haul visibility.** Added RIPE RIS **rrc03** (Amsterdam AMS-IX) and RouteViews **route-views2** (Oregon, US), complementing the existing rrc01 (London) / rrc06 (Tokyo). Visible AS adjacencies grew ~**22%** and distinct paths ~**90%** — more transit and IXP paths are now observed.
+- **改进：ASN 查询更快。** 「某 AS 通告的前缀」改用精简的预建 origin 索引 + 预聚合计数，每次查询读取的数据量大幅降低。
+  **Improved: faster ASN lookups.** «Prefixes originated by an AS» now uses a lean pre-built origin index plus pre-aggregated counts, sharply cutting the data read per query.
+
 ## 2026-06-07
 
 - **新增：首页 3D 地球路由可视化。** peer.as 首页背景新增一个可交互的 3D 地球，自动识别你的连接来源，并把你到各
