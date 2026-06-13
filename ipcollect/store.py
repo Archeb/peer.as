@@ -32,6 +32,7 @@ CREATE TABLE IF NOT EXISTS obs (
     ip_end     UHUGEINT,
     family     UTINYINT,
     plen       UTINYINT,
+    path_raw   VARCHAR,
     path_clean VARCHAR,
     path_len   USMALLINT,
     origin_asn BIGINT,
@@ -43,7 +44,7 @@ CREATE TABLE IF NOT EXISTS meta (key VARCHAR PRIMARY KEY, value VARCHAR);
 
 # obs CSV 列序(Python 写 / DuckDB read_csv 读, 必须一致)
 _OBS_COLS = ["prefix", "ip_start", "ip_end", "family", "plen",
-             "path_clean", "path_len", "origin_asn", "collector", "n_peers"]
+             "path_raw", "path_clean", "path_len", "origin_asn", "collector", "n_peers"]
 
 
 def connect(path: Optional[Path] = None, *, read_only: bool = False):
@@ -102,9 +103,9 @@ class ObsWriter:
         self.n = 0
 
     def write(self, prefix, ip_start, ip_end, family, plen,
-              path_clean, path_len, origin_asn, collector, n_peers) -> None:
+              path_raw, path_clean, path_len, origin_asn, collector, n_peers) -> None:
         self._w.writerow((prefix, ip_start, ip_end, family, plen,
-                          path_clean, path_len, origin_asn, collector, n_peers))
+                          path_raw, path_clean, path_len, origin_asn, collector, n_peers))
         self.n += 1
 
     def close(self) -> None:
@@ -117,7 +118,8 @@ def load_csv(con, csv_path: str) -> int:
     """把 ObsWriter 写出的 CSV 灌进 obs 表(ip_start/ip_end cast 成 UHUGEINT)。返回行数。"""
     cols = {
         "prefix": "VARCHAR", "ip_start": "VARCHAR", "ip_end": "VARCHAR",
-        "family": "UTINYINT", "plen": "UTINYINT", "path_clean": "VARCHAR",
+        "family": "UTINYINT", "plen": "UTINYINT",
+        "path_raw": "VARCHAR", "path_clean": "VARCHAR",
         "path_len": "USMALLINT", "origin_asn": "BIGINT", "collector": "VARCHAR",
         "n_peers": "UINTEGER",
     }
@@ -127,7 +129,7 @@ def load_csv(con, csv_path: str) -> int:
     con.execute(f"""
         INSERT INTO obs
         SELECT prefix, ip_start::UHUGEINT, ip_end::UHUGEINT, family, plen,
-               path_clean, path_len, origin_asn, collector, n_peers
+               path_raw, path_clean, path_len, origin_asn, collector, n_peers
         FROM read_csv('{csv_path}', header=false, auto_detect=false, columns={coldef});
     """)
     return con.execute("SELECT count(*) FROM obs").fetchone()[0] - before
@@ -139,7 +141,8 @@ def load_csv(con, csv_path: str) -> int:
 def finalize(con) -> dict:
     """从 obs 物化 pathobs 与 prefix。多次 ingest(多 collector)后调一次。
 
-    pathobs: 同 (prefix, path_clean) 跨 collector 合并, n_peers 累加(= 跨两采集点的去重 vantage 数)。
+    pathobs: 同 (prefix, path_raw) 跨 collector 合并, n_peers 累加(= 跨采集点的去重 vantage 数);
+             path_raw 含 prepend, 故仅 prepend 不同的路径各算一条。path_clean(折叠)随行携带。
     prefix : 每前缀一行 + pid(按 ip_start 排序) + 代表 origin(n_peers 之和最大者) + n_paths/n_origins。
     """
     util.log("  finalize: obs -> pathobs (跨 collector 合并去重路径)")
@@ -149,11 +152,12 @@ def finalize(con) -> dict:
         SELECT prefix,
                any_value(ip_start) AS ip_start, any_value(ip_end) AS ip_end,
                any_value(family)   AS family,   any_value(plen)   AS plen,
-               path_clean,
+               path_raw,
+               any_value(path_clean) AS path_clean,
                any_value(path_len) AS path_len,
                any_value(origin_asn) AS origin_asn,
                sum(n_peers)::BIGINT AS n_peers
-        FROM obs GROUP BY prefix, path_clean;
+        FROM obs GROUP BY prefix, path_raw;
     """)
 
     util.log("  finalize: pathobs -> prefix (每前缀 + pid + 代表 origin)")

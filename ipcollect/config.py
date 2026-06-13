@@ -52,11 +52,15 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "geolite_repo": "P3TERX/GeoLite.mmdb",
     "geolite_city_asset": "GeoLite2-City.mmdb",
     "geolite_asn_asset": "GeoLite2-ASN.mmdb",
-    # 采集点(RIPE RIS): 双点互补 —— rrc01(LINX, 伦敦) + rrc06(NSPIXP, 东京)。弃用 rrc00(代表性不足)。
-    # 兼容: 若缺 mrt_collectors 则回退单值 mrt_collector。
-    "mrt_collectors": ["rrc01", "rrc06"],
+    # 采集点(多源混合, 按名自动选布局: rrc*->RIPE RIS, route-views*->RouteViews):
+    #   rrc01(RIS, LINX 伦敦)  rrc06(RIS, NSPIXP 东京)  rrc03(RIS, AMS-IX 阿姆斯特丹, 大 peer 池)
+    #   route-views2(RouteViews, Oregon, ~100+ full-feed peer, 全球可见性主力)
+    # 弃用 rrc00(代表性不足)。兼容: 若缺 mrt_collectors 则回退单值 mrt_collector。
+    "mrt_collectors": ["rrc01", "rrc06", "rrc03", "route-views2"],
     "mrt_collector": "rrc01",
     "mrt_base_url": "https://data.ris.ripe.net",
+    # RouteViews 归档根(route-views* 采集点用; RIS 采集点用 mrt_base_url)。
+    "routeviews_base_url": "https://archive.routeviews.org",
     # MRT 源布局: "ripe"=列月份目录取最新 bview.*.gz(RIPE RIS); "dn42"=直接取 master4/6_latest.mrt.bz2(dn42 GRC)。
     # dn42 站(site=dn42)的 config.json 设 mrt_layout="dn42" + mrt_base_url="https://mrt42.strexp.net"。
     "mrt_layout": "ripe",

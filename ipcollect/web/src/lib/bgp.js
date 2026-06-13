@@ -83,11 +83,17 @@ export const isLowVis = r => !!r && r.n_paths != null && S.meta && r.n_paths < l
 
 const short = s => (s && s.length > 22) ? s.slice(0, 21) + '…' : s
 // AS_PATH -> [{asn,name,nameShort,op,cls,tier1}]  (供 <AsPath> 渲染; nameShort 防超长 handle 撑爆路径)
+// 折叠连续重复(AS prepend)成单 token + rep 计数: rep>1 时 UI 渲染为 "ASN ×rep"。
+// 入参可能是原始 path(含 prepend)或已折叠的 clean path(rep 恒为 1, 无副作用)。
 export function pathTokens(asns) {
-  return (asns || []).map(a => {
+  const out = []
+  for (const a of asns || []) {
+    const prev = out[out.length - 1]
+    if (prev && prev.asn === a) { prev.rep++; continue }
     const name = asnName(a)
-    return { asn: a, name, nameShort: short(name), op: opText(a), cls: opCls(a), tier1: TIER1.has(+a) }
-  })
+    out.push({ asn: a, name, nameShort: short(name), op: opText(a), cls: opCls(a), tier1: TIER1.has(+a), rep: 1 })
+  }
+  return out
 }
 export const parseBest = s => (s ? s.trim().split(/\s+/).map(Number) : [])
 

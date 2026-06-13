@@ -378,3 +378,25 @@ export function pathsearchFilesForOrigins(asns) {
       if (e.lo != null && e.hi != null && a >= e.lo && a <= e.hi) set.add(e.f)
   return set.size ? [...set] : null
 }
+
+// byorigin: pathsearch 的精简版(无 paths_blob), 纯 origin 查询(不含 AS_PATH 子串)走这套轻量分片。
+// 索引/语义与 pathsearchFilesForOrigin* 完全同构, 只是换 byorigin_origin 索引 + byorigin 文件集。
+const _byAll = () => [...(S.meta?.files?.byorigin || []), ...(S.meta?.files?.byorigin_v6 || [])]
+const _byOriginIdx = () => [...(S.meta?.files?.byorigin_origin || []), ...(S.meta?.files?.byorigin_origin_v6 || [])]
+export function byoriginFilesForOrigin(originAsn) {
+  const idx = _byOriginIdx()
+  if (originAsn == null || !idx.length) return _byAll()
+  const hit = idx.filter(e => e.lo != null && e.hi != null && originAsn >= e.lo && originAsn <= e.hi)
+  return hit.length ? hit.map(e => e.f) : null
+}
+export function byoriginFilesForOrigins(asns) {
+  const idx = _byOriginIdx()
+  if (!Array.isArray(asns) || !asns.length || !idx.length) return _byAll()
+  const set = new Set()
+  for (const a of asns)
+    for (const e of idx)
+      if (e.lo != null && e.hi != null && a >= e.lo && a <= e.hi) set.add(e.f)
+  return set.size ? [...set] : null
+}
+// origin_counts: 每 origin 通告前缀数(v4/v6) 预聚合, 单小文件(按 origin 排序)。
+export const originCountsFiles = () => S.meta?.files?.origin_counts || []

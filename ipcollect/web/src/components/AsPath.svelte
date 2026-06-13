@@ -10,7 +10,7 @@
   const go = (e, asn) => { e.stopPropagation(); if (onnav) onnav(asn); else showAsn(asn) }
 </script>
 
-{#snippet body(tk)}<b>{tk.asn}</b>{#if tk.name}<span class="an">({tk.nameShort})</span>{/if}{#if tk.tier1}<span class="t1" title="Tier-1">★</span>{/if}{/snippet}
+{#snippet body(tk)}<b>{tk.asn}</b>{#if tk.name}<span class="an">({tk.nameShort})</span>{/if}{#if tk.tier1}<span class="t1" title="Tier-1">★</span>{/if}{#if tk.rep > 1}<span class="rep" title="AS prepend ×{tk.rep}">×{tk.rep}</span>{/if}{/snippet}
 
 <code class="aspath" class:dim>
   {#each toks as tk, i}{#if nav}<button type="button"
@@ -31,5 +31,6 @@
   .asn.hi { background: var(--accent-dim); border-radius: 4px; padding: 0 3px; outline: 1px solid var(--accent); }
   .asn .an { opacity: 0.72; font-size: 0.92em; font-family: var(--sans); }
   .asn .t1 { color: var(--signal); margin-left: 1px; font-size: 0.85em; }
+  .asn .rep { color: var(--accent); font-size: 0.82em; margin-left: 2px; font-weight: 700; opacity: 0.9; }
   .arr { color: var(--muted); opacity: .5; margin: 0 2px; font-weight: 700; user-select: none; }
 </style>

@@ -41,7 +41,9 @@ def _subtract(s: int, e: int, holes: list) -> list[tuple]:
         out.append((cur, e))
     return out
 
-PATH_CAP = 64   # 每前缀导出的去重 AS_PATH 上限。rrc01+rrc06 下 n_distinct_paths max≈50, 64 留头room
+PATH_CAP = 128  # 每前缀导出的去重 AS_PATH 上限(按 path_len ASC, n_peers DESC 取头部)。
+                # 4 采集点(rrc01/06/03+route-views2)下 n_distinct_paths max≈94/mean≈69 -> 128 ship 全量且留头room。
+                # 注: 这是**会生效的截顶杠杆** —— 再加采集点冲破 128 时此处会静默丢尾, 届时要么提 cap 要么记 log。
                 # (24 旧值会截断 ~93% 前缀的路径列表/路由图/AS_PATH 搜索, 掩盖多采集点的路径多样性)。
 FILE_SIZE = "16MB"
 PATHSEARCH_FILE_SIZE = "6MB"
@@ -253,16 +255,22 @@ def _export_family(con, cfg: dict, pq: Path, family: int, geo_on: bool = True, h
 
     # paths{suffix}: 每前缀去重 path(<=PATH_CAP), 按 pid 排序。
     (pq / f"paths{suffix}").mkdir(parents=True, exist_ok=True)
+    # path_str / path_arr 用 **path_clean**(折叠 prepend) —— 子序列搜索与邻接(asn_neigh)口径不变。
+    # path_arr_raw 仅在含 prepend(raw≠clean)时带原始数组(供详情抽屉展示 AS×N), 否则 NULL(parquet 近乎零开销)。
+    # is_best / rn 按 path_len(**原始**长度)排序: prepend 拉长的路径自然下沉, best=最短真实 AS_PATH。
     con.execute(f"""
         COPY (
           WITH p AS (
             SELECT pid, ' ' || path_clean || ' ' AS path_str,
                    list_transform(string_split(path_clean,' '), x -> TRY_CAST(x AS BIGINT)) AS path_arr,
+                   CASE WHEN path_raw = path_clean THEN NULL
+                        ELSE list_transform(string_split(path_raw,' '), x -> TRY_CAST(x AS BIGINT))
+                   END AS path_arr_raw,
                    path_len, n_peers,
                    row_number() OVER (PARTITION BY pid ORDER BY path_len ASC, n_peers DESC) AS rn
             FROM pathobs WHERE family={family}
           )
-          SELECT pid, path_str, path_arr, path_len, n_peers, (rn=1) AS is_best
+          SELECT pid, path_str, path_arr, path_arr_raw, path_len, n_peers, (rn=1) AS is_best
           FROM p WHERE rn <= {PATH_CAP} ORDER BY pid
         ) TO '{pq}/paths{suffix}' (FORMAT parquet, FILE_SIZE_BYTES '{FILE_SIZE}', OVERWRITE_OR_IGNORE);
     """)
@@ -304,6 +312,32 @@ def _export_family(con, cfg: dict, pq: Path, family: int, geo_on: bool = True, h
           LEFT JOIN irr_status  irs ON irs.pid = p.pid AND irs.origin = po.o_asn
           WHERE p.family={family} ORDER BY po.o_asn NULLS LAST
         ) TO '{pq}/pathsearch{suffix}' (FORMAT parquet, FILE_SIZE_BYTES '{PATHSEARCH_FILE_SIZE}',
+              ROW_GROUP_SIZE 15000, OVERWRITE_OR_IGNORE);
+    """)
+    con.execute("SET preserve_insertion_order=false;")
+    con.execute(f"PRAGMA threads={os.environ.get('IPC_DUCKDB_THREADS', '4')};")
+
+    # byorigin{suffix}: pathsearch 的**精简版** —— 去掉占 ~90% 体积的 paths_blob, 只留 origin 查询要的列。
+    # 纯 origin 过滤(ASN/名称/person/MOAS, 不含 AS_PATH 子串)读这套: 文件数与 footer ~10× 缩, 小 ASN 查询最受益。
+    # 含 AS_PATH 子串的查询仍走 pathsearch(那里有 paths_blob, 本就要扫)。行/排序与 pathsearch 一致, 索引同构。
+    (pq / f"byorigin{suffix}").mkdir(parents=True, exist_ok=True)
+    con.execute("PRAGMA threads=1;")
+    con.execute("SET preserve_insertion_order=true;")
+    con.execute(f"""
+        COPY (
+          WITH po AS (SELECT DISTINCT pid, origin_asn AS o_asn FROM pathobs WHERE family={family})
+          SELECT p.pid, p.prefix, COALESCE(p.cc,'ZZ') AS cc,
+                 po.o_asn AS origin_asn, p.n_origins, p.n_paths,
+                 (po.o_asn IS NOT DISTINCT FROM p.origin_asn) AS is_primary,
+                 COALESCE(rs.rpki,0)::UTINYINT AS rpki, COALESCE(irs.irr,0)::UTINYINT AS irr,
+                 pp.best_path
+          FROM pgeo p
+          JOIN po ON po.pid = p.pid
+          LEFT JOIN pp{suffix} pp ON pp.pid = p.pid
+          LEFT JOIN rpki_status rs  ON rs.pid = p.pid  AND rs.origin = po.o_asn
+          LEFT JOIN irr_status  irs ON irs.pid = p.pid AND irs.origin = po.o_asn
+          WHERE p.family={family} ORDER BY po.o_asn NULLS LAST
+        ) TO '{pq}/byorigin{suffix}' (FORMAT parquet, FILE_SIZE_BYTES '{PATHSEARCH_FILE_SIZE}',
               ROW_GROUP_SIZE 15000, OVERWRITE_OR_IGNORE);
     """)
     con.execute("SET preserve_insertion_order=false;")
@@ -546,6 +580,29 @@ def export(cfg: dict, con, out_dir: str = "dist") -> dict:
         con.execute(f"PRAGMA threads={os.environ.get('IPC_DUCKDB_THREADS', '4')};")
         shutil.rmtree(pq / "asn_neigh", ignore_errors=True)
 
+    # ── origin_counts: 每 origin 通告前缀数(v4/v6) 预聚合(跨 family, 单小文件 ~<1MB)。
+    #    ASN 视图「通告 N 个前缀」O(1) 直读, 免去 showAsn 里对分片做运行时 SUM 聚合。
+    try:
+        (pq / "origin_counts").mkdir(parents=True, exist_ok=True)
+        con.execute("PRAGMA threads=1;")
+        con.execute("SET preserve_insertion_order=true;")
+        con.execute(f"""COPY (
+            SELECT origin_asn,
+                   count(DISTINCT pid) FILTER (WHERE family=4)::BIGINT AS n_v4,
+                   count(DISTINCT pid) FILTER (WHERE family=6)::BIGINT AS n_v6
+            FROM pathobs WHERE origin_asn IS NOT NULL
+            GROUP BY origin_asn ORDER BY origin_asn
+        ) TO '{pq}/origin_counts' (FORMAT parquet, FILE_SIZE_BYTES '8MB', OVERWRITE_OR_IGNORE);""")
+        con.execute("SET preserve_insertion_order=false;")
+        con.execute(f"PRAGMA threads={os.environ.get('IPC_DUCKDB_THREADS', '4')};")
+        has_origin_counts = True
+    except Exception as e:  # noqa  失败只降级(前端回退分片聚合计数)
+        util.log(f"  ! origin_counts 预聚合失败, 降级: {e}", err=True)
+        has_origin_counts = False
+        con.execute("SET preserve_insertion_order=false;")
+        con.execute(f"PRAGMA threads={os.environ.get('IPC_DUCKDB_THREADS', '4')};")
+        shutil.rmtree(pq / "origin_counts", ignore_errors=True)
+
     # 数据里出现过的 ASN(路径上 + origin), 名称表只保留这些。
     seen: set[int] = set()
     for f in families:
@@ -651,6 +708,9 @@ def export(cfg: dict, con, out_dir: str = "dist") -> dict:
         files[f"pathsearch{suf}"] = _rel(f"pathsearch{suf}")
         files[f"paths_pid{suf}"] = _pid_index(files[f"paths{suf}"])
         files[f"pathsearch_origin{suf}"] = _origin_index(files[f"pathsearch{suf}"])
+        # byorigin: pathsearch 精简版(无 paths_blob) + 同构 origin 区间索引, 供纯 origin 查询走轻量分片。
+        files[f"byorigin{suf}"] = _rel(f"byorigin{suf}")
+        files[f"byorigin_origin{suf}"] = _origin_index(files[f"byorigin{suf}"])
         files[("geo" if f == 4 else "geo_v6")] = {cc: _rel(f"{gd}/{cc}") for cc in r["ccs"]}
         if has_irr:   # IRR route 对象明细数据集 + v4 区间索引(同 prefixes_ip; v6 前端读全部)
             files[f"irr{suf}"] = _rel(f"irr{suf}")
@@ -667,6 +727,8 @@ def export(cfg: dict, con, out_dir: str = "dist") -> dict:
     if has_asn_neigh:   # ASN 邻接计数 + asn 数值区间索引(完整邻居只读覆盖该 asn 的 1 分片)
         files["asn_neigh"] = _rel("asn_neigh")
         files["asn_neigh_key"] = _num_index(files["asn_neigh"], "asn")
+    if has_origin_counts:   # 每 origin 通告前缀数(v4/v6) 预聚合, 单小文件按 origin 排序
+        files["origin_counts"] = _rel("origin_counts")
 
     # 国家清单(union 两 family) + 双语名(country_dim) + 各国城市清单(侧栏导航)。
     # carve 把**所有**国家都切到城市级, 故城市下拉对每个国家都构建(不再限定焦点国)。
@@ -724,6 +786,10 @@ def export(cfg: dict, con, out_dir: str = "dist") -> dict:
                    "authoritative": asset_meta.get("authoritative")} if has_asset else None),
         # ASN 邻接计数预计算(完整邻居视图改读索引分片, 不再前端全表扫; 分类仍前端做)。
         "has_asn_neigh": has_asn_neigh,
+        # byorigin: pathsearch 精简版(无 paths_blob), 纯 origin 查询走它; origin_counts: 每 origin 前缀数预聚合。
+        # 门控: 缺标志(旧数据)时前端回退用 pathsearch + 运行时聚合, 行为不变。
+        "has_byorigin": all(f"byorigin{fam_results[f]['suffix']}" in files and files[f"byorigin{fam_results[f]['suffix']}"] for f in families),
+        "has_origin_counts": has_origin_counts,
         "files": files,
         "generated_ts": now,
         "generated_str": time.strftime("%Y-%m-%d %H:%M", time.localtime(now)),

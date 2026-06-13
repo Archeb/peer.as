@@ -1,7 +1,9 @@
 // 搜索 / insight 逻辑 (从 web_ref/app.js 移植), 结果写入 S。
 import { S } from './store.svelte.js'
 import { t } from './i18n.js'
-import { q, rpList, pathsFileFor, pathsearchFilesForOrigin, pathsearchFilesForOrigins, prefixesFilesForRange, irrFilesForRange,
+import { q, rpList, pathsFileFor, pathsearchFilesForOrigin, pathsearchFilesForOrigins,
+  byoriginFilesForOrigin, byoriginFilesForOrigins, originCountsFiles,
+  prefixesFilesForRange, irrFilesForRange,
   assetSetFiles, assetSetFilesForKey, assetMemberFilesForKey, assetMemberOfFilesForKey, asnNeighFilesForAsn, ensureEngine } from './db.js'
 import { resolveDns } from './dns.js'
 import { features } from './site.js'
@@ -106,8 +108,11 @@ export async function runSearch(keepPage = false) {
   } else {
     if (!hasPath && !originAsns) { S.rows = []; S.mode = 'prompt'; S.msg = ''; return }
     isGlobal = true
-    // origin AS 搜索: 只读覆盖这些 ASN 的 pathsearch 分片(按 origin 排序 + 区间索引); 纯 AS_PATH 搜索仍全表扫。
-    const psAll = originAsns ? pathsearchFilesForOrigins(originAsns) : pathsearchFilesForOrigin(null)
+    // 纯 origin 过滤(有 originAsns 且无 AS_PATH 子串)走 byorigin 轻量分片(无 paths_blob, 文件/footer ~10×↓);
+    // 含 AS_PATH 子串(需 paths_blob)或纯 path 搜索仍走 pathsearch。缺 byorigin(旧数据)回退 pathsearch。
+    const useBy = originAsns && !hasPath && S.meta?.has_byorigin
+    const psAll = useBy ? byoriginFilesForOrigins(originAsns)
+      : originAsns ? pathsearchFilesForOrigins(originAsns) : pathsearchFilesForOrigin(null)
     const psFiles = psAll === null ? [] : byFam(psAll)   // family 单选过滤
     if (!psFiles.length) {   // 无覆盖分片(origin 不在库, 或被 family 过滤空) -> 空结果, 不下任何文件
       S.rows = []; S.mode = 'global'
@@ -287,13 +292,15 @@ export async function probeIp(ip) {
   if (m?.pid == null) return out
   let rows = []
   try {
-    rows = await q(`SELECT path_arr, path_len, n_peers, is_best FROM ${rpList(pathsFileFor(m.pid))}
+    rows = await q(`SELECT path_arr, path_arr_raw, path_len, n_peers, is_best FROM ${rpList(pathsFileFor(m.pid))}
       WHERE pid=${m.pid} ORDER BY is_best DESC, path_len ASC, n_peers DESC`)
   } catch (e) { /* ignore */ }
   const up = new Map()
   for (const p of rows) {
     const a = Array.from(p.path_arr || []).map(Number)
-    out.paths.push({ asns: a, len: Number(p.path_len) || a.length, peers: Number(p.n_peers) || 0, best: !!p.is_best })
+    // 展示用原始 path(含 prepend); 仅含 prepend 的行才带 path_arr_raw, 否则回退折叠后的 a。
+    const araw = p.path_arr_raw ? Array.from(p.path_arr_raw).map(Number) : a
+    out.paths.push({ asns: araw, len: Number(p.path_len) || araw.length, peers: Number(p.n_peers) || 0, best: !!p.is_best })
     if (a.length < 2) continue
     const origin = a[a.length - 1]
     let i = a.length - 2
@@ -506,19 +513,29 @@ export async function showAsn(asn) {
   if (S.view !== 'trace') go('/' + asn)      // trace 视图里走浮窗, 不动 URL
   if (!S.ready) { return }
   try {
-    const psAll = pathsearchFilesForOrigin(asn)
+    // 通告前缀列表走 byorigin(纯 origin, 无 paths_blob); 计数走 origin_counts 预聚合(O(1), 与 family 过滤无关)。
+    // 缺新数据集(旧数据)各自回退: byorigin->pathsearch, origin_counts->分片运行时 SUM。
+    const psAll = S.meta?.has_byorigin ? byoriginFilesForOrigin(asn) : pathsearchFilesForOrigin(asn)
     const psFiles = psAll === null ? [] : byFam(psAll)
-    let rows = [], cnt = [{}]
-    if (psFiles.length) {    // 该 ASN 是库内某些前缀的 origin -> 取通告前缀 + 计数(纯 transit/不在库则为空, 仍展示邻居)
+    let rows = [], c4 = 0, c6 = 0
+    const tasks = []
+    if (psFiles.length) {    // 该 ASN 是库内某些前缀的 origin -> 取通告前缀(纯 transit/不在库则为空, 仍展示邻居)
       const from = rpList(psFiles)
-      ;[rows, cnt] = await Promise.all([
-        q(`SELECT pid, prefix, cc, n_paths, best_path FROM ${from} WHERE origin_asn=${asn} ORDER BY n_paths DESC LIMIT 400`),
-        q(`SELECT SUM(CASE WHEN prefix LIKE '%:%' THEN 0 ELSE 1 END) AS c4, SUM(CASE WHEN prefix LIKE '%:%' THEN 1 ELSE 0 END) AS c6 FROM ${from} WHERE origin_asn=${asn}`),
-      ])
+      tasks.push(q(`SELECT pid, prefix, cc, n_paths, best_path FROM ${from} WHERE origin_asn=${asn} ORDER BY n_paths DESC LIMIT 400`)
+        .then(r => { rows = r }))
     }
+    if (S.meta?.has_origin_counts) {
+      tasks.push(q(`SELECT n_v4 AS c4, n_v6 AS c6 FROM ${rpList(originCountsFiles())} WHERE origin_asn=${asn}`)
+        .then(r => { c4 = Number(r[0]?.c4 || 0); c6 = Number(r[0]?.c6 || 0) }))
+    } else if (psFiles.length) {
+      const from = rpList(psFiles)
+      tasks.push(q(`SELECT SUM(CASE WHEN prefix LIKE '%:%' THEN 0 ELSE 1 END) AS c4, SUM(CASE WHEN prefix LIKE '%:%' THEN 1 ELSE 0 END) AS c6 FROM ${from} WHERE origin_asn=${asn}`)
+        .then(r => { c4 = Number(r[0]?.c4 || 0); c6 = Number(r[0]?.c6 || 0) }))
+    }
+    await Promise.all(tasks)
     S.asnView = {
       asn, name: asnName(asn),
-      count4: Number(cnt[0]?.c4 || 0), count6: Number(cnt[0]?.c6 || 0),
+      count4: c4, count6: c6,
       prefixes: rows, neigh: null,
     }
   } catch (e) { S.asnView = { asn, name: asnName(asn), error: e.message } }

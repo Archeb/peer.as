@@ -5,12 +5,13 @@
 > （README 面向人类、偏介绍；本文件面向 agent、偏操作。）
 
 本项目 = 自研 CLI `ipc`（python 包 `ipcollect/`，用同目录 `.venv`）+ 纯静态 Web 看板
-**PEER.AS（全球版 BGP Insights）**。从 RIPE **rrc01+rrc06** 双采集点 MRT **全表(IPv4+IPv6)** 静态分析回程 AS_PATH，
+**PEER.AS（全球版 BGP Insights）**。从 **4 采集点**(RIPE RIS `rrc01`/`rrc06`/`rrc03` + RouteViews `route-views2`，按名自动选布局) MRT **全表(IPv4+IPv6)** 静态分析回程 AS_PATH，
 **入库 = 全球全部 v4+v6 前缀**（不按 ASN/国家过滤，focus_* 仅作高亮/导航），用 **DuckDB 工作库**去重，导出
 **Parquet** 数据集（v4 + v6 两套），**DuckDB-WASM 在浏览器里查询静态 Parquet**（全 GET 整片下载、无 Range，无后端），部署到 Cloudflare Pages。
 **重构细节见 `docs/DUCKDB_V6_REFACTOR.md`（DuckDB+v6 设计契约, 含踩坑记录), 旧版见 `docs/GLOBAL_DESIGN.md`。**
 
-> 规模实测(2026-06 rrc01+rrc06)：**1.10M v4 + 0.26M v6 前缀 / 50.3M 去重路径**。
+> 规模实测(2026-06 四采集点 rrc01/06/03+route-views2)：**1.13M v4 + 0.26M v6 前缀 / 95.9M 去重路径**（含 prepend）。
+> 对比双采集点(rrc01+rrc06, 50.5M 路径)：可见 AS 邻接边 +22%、distinct path +90%、前缀 +2%；下载/库各约 ×2.4/×2.8。
 > **中间库 = DuckDB**(`ipcollect.duckdb`, 跑完即弃, 已 gitignore；SQLite 已退役)。
 > **IP 列用 `UHUGEINT`**(无符号 128 位, 同时容纳 v4/v6；**比较要 `::UHUGEINT` cast**, 否则 DuckDB 推断成有符号
 > HUGEINT 会让 v6 溢出)。**4 字节 ASN(>2^31)用 BIGINT**，勿用 INT32。
@@ -31,11 +32,11 @@
 - `cli.py` — `ipc` 子命令入口（argparse）。**只保留部署/处理快捷入口**：`init`/`config`/`geo-import`/`ingest`/
   `build`/`export-parquet`/`sync-web`/`serve`。**查询入口(query/stats/insight/geo-lookup)已退役**(source of
   truth = 原始 MRT, 调试直接用 DuckDB 查工作库或 parquet)。
-- `config.py` — `DEFAULT_CONFIG` + `load/save`；`asn_registry`/`mrt_collectors`(=`[rrc01,rrc06]`)/`geolite_*` 集中在此，
+- `config.py` — `DEFAULT_CONFIG` + `load/save`；`asn_registry`/`mrt_collectors`(=`[rrc01,rrc06,rrc03,route-views2]`)/`routeviews_base_url`/`geolite_*` 集中在此，
   `load()` 时调 `bgp.set_registry()` 灌入。
-- `bgp.py` — AS_PATH 清洗、ASN 命名（运行时由 config 灌入）、`path_contains_seq`（**连续子序列**）、`resolve_asns`。
-- `mrt.py` — 自写流式 MRT RIB 解析(已支持 v4+v6)；下载**断点续传+重试**；`ingest()`：遍历 `mrt_collectors`,
-  收全表 v4+v6, Python 端按 (prefix,path) 去重写 `obs`(带 collector), 末尾 `store.finalize()` 跨 collector 合并出
+- `bgp.py` — AS_PATH 清洗(`clean_path` 折叠 prepend, **仅供搜索/邻接/展示**, 入库去重不再用它)、ASN 命名（运行时由 config 灌入）、`path_contains_seq`（**连续子序列**）、`resolve_asns`。
+- `mrt.py` — 自写流式 MRT RIB 解析(v4+v6)；下载**断点续传+重试**；`collector_source()`/`latest_bview_url()` 按采集点名自动选 **RIS(`rrc*`, gz) / RouteViews(`route-views*`, bz2, `bgpdata/<月>/RIBS/`)** 布局(月份目录往回找避开空未来月)；`ingest()`：遍历 `mrt_collectors`,
+  收全表 v4+v6, Python 端按 **(prefix, path_raw)**(含 prepend)去重写 `obs`(带 path_clean+collector), 末尾 `store.finalize()` 跨 collector 合并出
   `pathobs`/`prefix`。ingest 前先 `geoip.ensure_geolite`(过期才下) + 缺/更新时 `build_geo`。`--family 4/6` 调试限族。
 - `store.py` — **DuckDB 工作库**(取代 SQLite)。`connect`(套 IPC_DUCKDB_* + cache/duck_tmp 溢出)、`obs`/`meta` 表、
   `ObsWriter`(CSV 流式写)+`load_csv`(read_csv+`::UHUGEINT` cast 批量灌)、`finalize`(GROUP BY 去重 → pathobs/prefix + pid)。
@@ -192,7 +193,7 @@ registry（全量 whois）= git 仓 `registry_repo`（`cache/dn42-registry`，cl
   **域名 whois**：`export_dn42` 还把全量 `dns/` 对象写成 `data/registry/domain/<zone>.json`（同形, nserver 作 head 行）；
   前端输入 `*.dn42` → `fetchRegistry('domain',…)` 逐级回退到登记的 zone。
 - `mrt.py`：`mrt_layout="dn42"` 直取 master4/6 bz2（`_open_mrt` 按扩展名选 bz2/gz）；GRC 每前缀经上千 peer ⇒ 每前缀
-  ~2000 条 AS_PATH（paths/ 按 `PATH_CAP`=64 取 top-N，pathsearch/pp 有界）。
+  ~2000 条 AS_PATH（paths/ 按 `PATH_CAP`=128 取 top-N，pathsearch/pp 有界）。
 - **按 person 筛选取代国家**：无 geo；前端选 person → 用其 ASN 集合过滤 `pathsearch`（origin_asn IN）。
 
 #### dn42 部署（独立 checkout + 同一份脚本）
@@ -228,9 +229,9 @@ registry（全量 whois）= git 仓 `registry_repo`（`cache/dn42-registry`，cl
 ```
 GeoLite mmdb 缓存在 `cache/geo/`(+ `geolite.version` 戳)。**首次 geo-import 较慢(~11min: 遍历 5.8M 段 + 非重叠合并)**, 只在 GeoLite 更新时重跑。
 
-### 1) 全表 ingest 最新 RIB（双采集点, v4+v6）
+### 1) 全表 ingest 最新 RIB（4 采集点, v4+v6）
 ```bash
-./ipc ingest --reset                  # 下载 rrc01+rrc06 最新 RIB(各~350MB/40MB), 全表 v4+v6 入 DuckDB; 约 13-15 分钟
+./ipc ingest --reset                  # 下载 rrc01/06/03(RIS,gz ~350/40/310MB)+route-views2(RouteViews,bz2 ~75MB) 最新 RIB, 全表 v4+v6 入 DuckDB; 约 40-45 分钟
 # 复用本地已下: ./ipc ingest --reset --mrt-file cache/mrt/<file>.gz   # 单文件, 调试
 # 只收某族: ./ipc ingest --reset --family 6
 ```
@@ -513,6 +514,13 @@ parquet`)后该 SET 不再触发任何 autoload。**别把会触发扩展 autolo
   那 1 个文件**(原来要扫全部 ~18 个/177MB → 现 ~7MB)；索引完整但无文件覆盖 = 该 origin 不存在, 直接空结果不发查询。
   **纯 AS_PATH(LIKE)搜索仍全表扫所有分片**(无法按子串裁剪)。单线程是必须的：多线程 COPY 写多文件不保证跨文件全局有序
   → origin 区间重叠 → 退化成多文件命中。
+  - **`byorigin`(纯 origin 查询的精简版, 关键性能)**：pathsearch 里 `paths_blob` 占 ~90% 体积, 但**纯 origin 过滤根本不用它**。
+    故另导一套 `byorigin{,_v6}` = pathsearch 去掉 `paths_blob`(只留 pid/prefix/cc/origin/n_origins/n_paths/is_primary/rpki/irr/best_path),
+    同构 `files.byorigin_origin` 区间索引。`originAsns && !hasPath`(ASN/名称/person/MOAS, 不含 AS_PATH 子串)走它 →
+    文件数/footer ~10×↓(v4 ~185MB/25 文件 → ~17.5MB/~3 文件)。含 AS_PATH 子串/纯 path 搜索仍走 pathsearch。
+    前端 `byoriginFilesForOrigin(s)`(db.js), 门控 `meta.has_byorigin`(缺=回退 pathsearch)。
+  - **`origin_counts`(每 origin 通告前缀数预聚合)**：跨 family 单小文件 `(origin_asn, n_v4, n_v6)`(<1MB)。
+    `showAsn` 计数 O(1) 直读, 免运行时对分片 `SUM` 聚合。门控 `meta.has_origin_counts`(缺=回退分片聚合)。
   - **MOAS 多行(关键)**：pathsearch 现按 **(前缀, origin)** 每 origin 一行(以前每前缀只留代表 origin)，故按**任一** origin
     搜 AS / 看「该 AS 通告的前缀」都能命中多源前缀。`is_primary` 标记代表 origin 那行：纯 AS_PATH 搜索 + `scanNeighbors`
     加 `is_primary` 去重回每前缀一行(防重复/重复计数)；按 origin 搜索不去重(要的就是该 origin 行)。门控 `meta.has_moas`。

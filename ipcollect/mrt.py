@@ -44,22 +44,46 @@ def collectors(cfg: dict) -> list[str]:
     return [c for c in cs if c]
 
 
-def latest_bview_url(cfg: dict, collector: Optional[str] = None) -> str:
-    import requests
+# RouteViews 归档默认根。采集点名以 "route-views" 开头者走 RouteViews 布局, 否则走 RIPE RIS。
+ROUTEVIEWS_BASE = "https://archive.routeviews.org"
 
-    base = cfg["mrt_base_url"].rstrip("/")
+
+def collector_source(name: str) -> str:
+    """按采集点名判定来源: route-views* -> RouteViews; rrc* / 其他 -> RIPE RIS。"""
+    return "routeviews" if name.startswith("route-views") else "ris"
+
+
+def _latest_in_months(murl_for, file_re: str, months: list[str], where: str) -> str:
+    """从最新月份往回找第一个含 RIB 文件的月份(归档可能预建空的未来月目录)。"""
+    for month in sorted(months, reverse=True):
+        murl = murl_for(month)
+        files = _list_links(murl, file_re)
+        if files:
+            return murl + sorted(files)[-1]
+    raise RuntimeError(f"无法在 {where} 任一月份目录里列出 RIB 文件")
+
+
+def latest_bview_url(cfg: dict, collector: Optional[str] = None) -> str:
     coll = collector or cfg.get("mrt_collector") or (collectors(cfg) or ["rrc01"])[0]
+
+    if collector_source(coll) == "routeviews":
+        # RouteViews: <base>/<coll>/bgpdata/<YYYY.MM>/RIBS/rib.<date>.<time>.bz2(每 2h 一份)。
+        base = (cfg.get("routeviews_base_url") or ROUTEVIEWS_BASE).rstrip("/")
+        root = f"{base}/{coll}/bgpdata/"
+        months = _list_links(root, r"20\d\d\.\d\d/")
+        if not months:
+            raise RuntimeError(f"无法在 {root} 列出月份目录")
+        return _latest_in_months(lambda m: f"{root}{m}RIBS/",
+                                  r"rib\.\d{8}\.\d{4}\.bz2", months, root)
+
+    # RIPE RIS: <base>/<coll>/<YYYY.MM>/bview.<date>.<time>.gz(每 8h 一份)。
+    base = cfg["mrt_base_url"].rstrip("/")
     root = f"{base}/{coll}/"
     months = _list_links(root, r"20\d\d\.\d\d/")
     if not months:
         raise RuntimeError(f"无法在 {root} 列出月份目录")
-    month = sorted(months)[-1]
-    murl = root + month
-    files = _list_links(murl, r"bview\.\d{8}\.\d{4}\.gz")
-    if not files:
-        raise RuntimeError(f"无法在 {murl} 列出 bview 文件")
-    latest = sorted(files)[-1]
-    return murl + latest
+    return _latest_in_months(lambda m: root + m,
+                             r"bview\.\d{8}\.\d{4}\.gz", months, root)
 
 
 def _list_links(url: str, pattern: str) -> list[str]:
@@ -299,7 +323,7 @@ def _ingest_one(con, mrt_file: str, collector: str, keep_pred,
                 limit: Optional[int]) -> tuple[int, int]:
     """解析单个 collector 的 RIB, 把去重后的 (prefix,path) 行写进 obs。返回 (前缀数, obs 行数)。
 
-    去重在 Python 端按 (prefix, path_clean) 做(同 collector 内 n_peers=观测此 path 的 peer 数);
+    去重在 Python 端按 (prefix, path_raw) 做(含 prepend; 同 collector 内 n_peers=观测此 path 的 peer 数);
     跨 collector 的合并留给 store.finalize()。
     """
     t0 = time.time()
@@ -312,22 +336,27 @@ def _ingest_one(con, mrt_file: str, collector: str, keep_pred,
     n_prefix = n_rows = 0
     for rec in iter_prefixes(mrt_file, keep_pred=keep_pred,
                              limit=limit, on_progress=progress):
-        dedup: dict[str, list] = {}   # path_clean -> [len, origin, n_peers]
+        # 去重键 = **原始 path(含 prepend)**: 仅 prepend 次数不同的路径视为不同观测(保留 inbound TE 信号)。
+        # path_clean(折叠连续重复)随行携带, 供搜索/邻接/展示折叠; path_len 取**原始**长度(BGP 选路真实口径)。
+        dedup: dict[str, list] = {}   # path_raw -> [path_clean, raw_len, origin, n_peers]
         for p in rec["paths"]:
-            clean = bgp.clean_path(p["asns"])
+            asns = p["asns"]
+            if not asns:
+                continue
+            clean = bgp.clean_path(asns)
             if not clean:
                 continue
-            key = " ".join(map(str, clean))
-            d = dedup.get(key)
+            raw_key = " ".join(map(str, asns))
+            d = dedup.get(raw_key)
             if d is None:
-                dedup[key] = [len(clean), clean[-1], 1]
+                dedup[raw_key] = [" ".join(map(str, clean)), len(asns), asns[-1], 1]
             else:
-                d[2] += 1
+                d[3] += 1
         if not dedup:
             continue
-        for key, (plen_, origin, n) in dedup.items():
+        for raw_key, (clean_str, rlen, origin, n) in dedup.items():
             w.write(rec["prefix"], rec["start"], rec["end"], rec["family"], rec["plen"],
-                    key, plen_, origin, collector, n)
+                    raw_key, clean_str, rlen, origin, collector, n)
             n_rows += 1
         n_prefix += 1
     w.close()
