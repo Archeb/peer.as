@@ -13,6 +13,10 @@
   let openAsn = $state(null)
   let pop = $state(null)
   let evCache = $state({})       // asn -> 'loading' | {path,side} | null(查无)
+  // 展示折叠: items 是**全部**邻居(计数即真实数), 默认只渲染前 SHOW 个; 超出给「展开/收起」。
+  const SHOW = 40
+  let expanded = $state(false)
+  const shown = $derived(expanded ? items : items.slice(0, SHOW))
 
   async function toggle(it) {
     if (openAsn === it.asn) { openAsn = null; return }
@@ -40,7 +44,7 @@
   <div class="rgroup">
     <b><Fa {icon} /> {title} <span class="gc">{items.length}</span></b>
     <div class="taglist">
-      {#each items as it}
+      {#each shown as it}
         <span class="tag" class:noev={!it.ev} class:open={openAsn === it.asn}>
           <button class="nav" onclick={() => showAsn(it.asn)} title="AS{it.asn}"><AsnTag asn={it.asn} /><span class="cnt">{it.n}</span></button>
           {#if it.ev}
@@ -69,6 +73,11 @@
         </span>
       {/each}
     </div>
+    {#if items.length > SHOW}
+      <button class="more" onclick={() => expanded = !expanded}>
+        {expanded ? t('rel_collapse') : t('rel_show_all').replace('{n}', items.length.toLocaleString())}
+      </button>
+    {/if}
   </div>
 {/if}
 
@@ -78,6 +87,8 @@
   .rgroup > b :global(svg) { color: var(--accent); }
   .rgroup > b .gc { font: 10px var(--mono); color: var(--muted); background: var(--line2); border-radius: 999px; padding: 0 6px; }
   .taglist { display: flex; flex-wrap: wrap; gap: 6px 8px; }
+  .more { margin-top: 7px; background: transparent; border: 1px solid var(--line2); color: var(--muted); cursor: pointer; padding: 3px 10px; border-radius: 7px; font-size: 11px; }
+  .more:hover { color: var(--accent); border-color: var(--accent); }
   .tag { position: relative; display: inline-flex; align-items: stretch; border: 1px solid var(--line2); border-radius: 7px; background: var(--inbg); }
   .tag.open { border-color: var(--accent); }
   .tag .nav { display: inline-flex; align-items: center; gap: 4px; background: transparent; border: 0; cursor: pointer; padding: 3px 8px; font-size: 11.5px; border-radius: 7px 0 0 7px; }

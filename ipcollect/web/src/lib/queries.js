@@ -569,7 +569,9 @@ function bumpNeighbor(acc, y, side, prefix, arr) {
 // 把累计的邻接 Map 按 classifyRelation 分到 up/peer/down 三组, 各带计数 + 一条依据路径。
 // 关键: 方向分类只用可靠证据(d/u, 已剔除 full-feed 假象 wd/w); 不丢弃任何邻居 ——
 //   只有绝对证据进上游/下游, 其余(含纯假象)一律落到 peer, 不臆测方向。
-function groupRelations(asn, acc, limit) {
+// 不截断: 返回**全部**邻居(已按 n 降序), 计数即真实邻居数。展示侧(RelGroup)再按需折叠显示个数 ——
+// 「采集/计算不能漏, 展示可以限制默认显示个数」。
+function groupRelations(asn, acc) {
   const out = emptyRel()
   for (const [y, o] of acc) {
     const rel = classifyRelation(asn, y, o.d, o.u)         // wd/w 不传入, 不污染方向 ⇒ 仅假象者落 peer
@@ -580,7 +582,7 @@ function groupRelations(asn, acc, limit) {
     const n = rel === 'peer' ? (o.d + o.u + o.w + o.wd) : (o.d + o.u)
     out[rel].push({ asn: y, n, d: o.d, u: o.u, ev })
   }
-  for (const k of ['up', 'peer', 'down']) out[k].sort((a, b) => b.n - a.n).splice(limit)
+  for (const k of ['up', 'peer', 'down']) out[k].sort((a, b) => b.n - a.n)
   return out
 }
 // 处理一条路径: 累计 asn 两侧邻接。上/下游证据都要求路径经过 DFZ 核心(Tier-1), 否则记为假象(w/wd)。
@@ -623,7 +625,7 @@ export async function scanNeighbors(asn) {
         { d: Number(r.d), u: Number(r.u), w: Number(r.w), wd: Number(r.wd),
           ev_pid: r.ev_pid == null ? null : Number(r.ev_pid), ev_prefix: r.ev_prefix ?? null })
       // 每对带代表样本 pid -> ℹ 依据在点开时才按 pid 懒查(loadEvidence), 不在此处取, 不拖慢 ASN 加载。
-      S.asnView = { ...S.asnView, neigh: { ...groupRelations(asn, acc, 40), scanned: rows.length, precomputed: true } }
+      S.asnView = { ...S.asnView, neigh: { ...groupRelations(asn, acc), scanned: rows.length, precomputed: true } }
       return
     }
     // 旧数据回退: 前端全表扫 pathsearch(重 + 2 万截断)。
@@ -639,7 +641,7 @@ export async function scanNeighbors(asn) {
         accPath(acc, path.trim().split(/\s+/).map(Number), asn, r.prefix)
       }
     }
-    S.asnView = { ...S.asnView, neigh: { ...groupRelations(asn, acc, 40), scanned: rows.length, capped: rows.length >= 20000 } }
+    S.asnView = { ...S.asnView, neigh: { ...groupRelations(asn, acc), scanned: rows.length, capped: rows.length >= 20000 } }
   } catch (e) { S.asnView = { ...S.asnView, neigh: { error: e.message } } }
 }
 
