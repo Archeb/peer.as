@@ -362,6 +362,7 @@ export function createTraceGlobe(canvas, opts = {}) {
         appearT: old ? old.appearT : introT,
       }
     })
+    if (!probes.length) { packets.length = 0; pktAcc = 0 }   // 结果清空 → 立刻收掉仍在飞的流量包(否则引用旧 probe 继续飞)
     if (model.target && tgChanged && (model.target.lat || model.target.lon)) {   // 新目标 → 相机缓飞过去(0,0/anycast 不飞)
       flyTo(model.target.lon, model.target.lat)
     }
