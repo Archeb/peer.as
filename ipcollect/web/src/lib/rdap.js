@@ -1,8 +1,8 @@
 // RDAP / WHOIS 客户端(纯前端直连)。
-// - bootstrap: 构建期内置 IANA RFC 9224 表(rdap-bootstrap.json), 把 ASN/IP 直接映射到对应 RIR 的
-//   RDAP base, 直连查询; 命中失败/出错回退 rdap.org 重定向器。
-// - 各 RIR 与 rdap.org 在 GET 上均回 Access-Control-Allow-Origin:* (实测), 重定向每跳都过 CORS,
-//   简单 GET 无预检 —— 故浏览器可直连。
+// - bootstrap: 构建期内置 IANA RFC 9224 表(rdap-bootstrap.json, 由 scripts/vendor-rdap-bootstrap.sh 自更新),
+//   把 ASN/IP/域名直接映射到对应 RIR / TLD 注册局的 RDAP base, 直连查询。
+//   **不依赖任何第三方重定向器(如 rdap.org)**: bootstrap 查不到 base 就不查(ip/asn 直接报"无", 域名转自有 WHOIS worker)。
+// - 各 RIR 在 GET 上均回 Access-Control-Allow-Origin:* (实测), 简单 GET 无预检 —— 故浏览器可直连。
 // - 返回值已把 jCard/嵌套 entity 拍平成 {key,value} 行 + entity 树, 供 Whois.svelte 做扁平 whois 渲染。
 // - 缓存: 内存(去重 in-flight) + sessionStorage(跨刷新), key = `autnum:<n>` / `ip:<cidr>`。
 // 详见 docs/RDAP_WHOIS_RESEARCH.md。
@@ -13,7 +13,6 @@ import { ip2int, ip6ToBig } from './bgp.js'
 // WHOIS 兜底文本解析(无 RDAP 的 ccTLD): 标签->规范 key 字典 + 多格式解析器(详见该文件)。fmtDate 也由它统一提供。
 import { parseWhois, fmtDate } from './whois-labels.js'
 
-const FALLBACK = 'https://rdap.org/'
 // 域名无 RDAP(典型 .de 等 ccTLD)时的 WHOIS over HTTP 兜底(CF Worker, 源码见 whois-worker/)。
 // 海外直连 worker; 境内(edge=cn)经 CN 机器 /whois 中转(直连 workers.dev 连通性差)。见 deploy/cn.peer.as.Caddyfile。
 const WHOIS_WORKER = 'https://peer-as-whois.archeb.workers.dev/'
@@ -55,7 +54,7 @@ function v6Has(cidr, n) {
   const start = (net >> host) << host
   return n >= start && n <= (start | ((1n << host) - 1n))
 }
-// 域名 -> TLD 注册局 RDAP base(据 dns bootstrap 末位标签匹配)。命中失败回退 rdap.org。
+// 域名 -> TLD 注册局 RDAP base(据 dns bootstrap 末位标签匹配)。命中失败返回 null(转 WHOIS 兜底)。
 function domainBase(domain) {
   const labels = String(domain).toLowerCase().replace(/\.$/, '').split('.')
   const tld = labels[labels.length - 1]
@@ -207,11 +206,11 @@ async function doFetch(kind, key) {
   const v6 = kind === 'ip' && String(key).includes(':')
   const base = kind === 'autnum' ? asnBase(+key) : kind === 'domain' ? domainBase(key) : ipBase(String(key), v6)
   const path = kind === 'autnum' ? `autnum/${key}` : kind === 'domain' ? `domain/${encodeURIComponent(key)}` : `ip/${key}`
+  // 只查 bootstrap 解析出的权威 RDAP base(+ 可选 CN 反代)。**无第三方兜底**: base 为空就不发请求。
   const tries = []
   const proxy = cnProxy()
   if (proxy) tries.push(proxy + path)
   if (base) tries.push(base + path)
-  tries.push(FALLBACK + path)   // rdap.org 兜底
 
   let lastErr
   for (const url of tries) {
