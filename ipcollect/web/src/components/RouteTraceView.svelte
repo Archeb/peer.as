@@ -9,6 +9,7 @@
   import { S } from '../lib/store.svelte.js'
   import { t } from '../lib/i18n.js'
   import { loadInsightFor } from '../lib/queries.js'
+  import { asnName } from '../lib/bgp.js'
   import { iPlay, iStop, iClose, iChevD, iChevR, iProbe, iClock, iGear, iInfinity, iSearch, iClear, iPlus, iCity, iCountry, iNet, iLoc, iRecenter, iVisible, iLowvis } from '../lib/icons.js'
   import { streamTrace } from '../lib/globalping.js'
   import { loadProbeLocations } from '../lib/trace-probes.js'
@@ -546,6 +547,7 @@
                 {@const tgtHop = hops.find(h => h.isTarget)}
                 {@const reached = !!tgtHop}
                 {@const phid = hiddenProbes.has(p.id)}
+                {@const pasName = asnName(p.asn)}
                 <div class="pcard" class:focus={focusId === p.id}
                      onmouseenter={() => (focusId = p.id)} onmouseleave={() => (focusId = null)} role="presentation">
                   <button class="prow" style:--pc={p.colorHex} onclick={() => toggleRow(p.id)}>
@@ -564,10 +566,10 @@
                       {#if p.asn}
                         <!-- svelte-ignore a11y_no_static_element_interactions -->
                         <span class="asbadge" role="button" tabindex="0"
-                              title={'AS' + p.asn + (p.network ? ' · ' + p.network : '')}
+                              title={'AS' + p.asn + (pasName ? ' · ' + pasName : '')}
                               onclick={(e) => { e.stopPropagation(); pick('AS' + p.asn) }}
                               onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.stopPropagation(); e.preventDefault(); pick('AS' + p.asn) } }}>
-                          <span class="asnum">AS{p.asn}</span>{#if p.network}<span class="asname">{p.network}</span>{/if}
+                          <span class="asnum">AS{p.asn}</span>{#if pasName}<span class="asname">{pasName}</span>{/if}
                         </span>
                       {/if}
                     </span>
