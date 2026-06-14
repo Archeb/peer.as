@@ -325,6 +325,7 @@ export function createTraceGlobe(canvas, opts = {}) {
   let target = null            // { la, lo, ip, label, city }
   let probes = []              // [{ ...vp, rgb, hops:[{la,lo,...}], segGrow:[], waveT, waveSeg, nDone }]
   let activeProbe = null       // hover/选中高亮的 probe id(null=全亮)
+  let hidden = new Set()       // 被用户隐藏的 probe id: 其路径/节点/包/源点都不画、也不参与命中
   const packets = []
   let pktAcc = 0
   let targetKey = null         // 目标稳定键(仅目标真的换了才重新缓飞相机, 不被逐跳更新打断)
@@ -368,6 +369,7 @@ export function createTraceGlobe(canvas, opts = {}) {
     }
   }
   function focus(id) { activeProbe = id || null }
+  function setHidden(s) { hidden = (s instanceof Set) ? s : new Set(s || []) }
   function recenter() { if (target) flyTo(target.lo / D2R, target.la / D2R) }
   // 复位: 缩放/平移平滑归位(homing) + 朝向缓飞(有目标→飞目标; 否则回默认朝向/地图中心)。2D/3D 通用。
   function reset() {
@@ -443,7 +445,24 @@ export function createTraceGlobe(canvas, opts = {}) {
   }
   const onTEnd = e => { if (!e.touches || e.touches.length < 2) pinchD = 0; drag.active = false; pointer.inside = false }
   // 滚轮缩放(像谷歌地球): 朝指针所在的地球点放大/缩小; 缩放期间打断自动缓飞
-  const onWheel = e => { e.preventDefault(); const r = surf.getBoundingClientRect(); zoomAt(e.clientX - r.left, e.clientY - r.top, e.deltaY < 0 ? 1.12 : 0.892) }
+  // 触摸板判定(捏合缩放 + 两指上下滚动都算): 不靠 deltaY 大小阈值(快滑会漏判), 而靠设备特征 ——
+  //   · 捏合手势 → 浏览器置 ctrlKey;
+  //   · Firefox 物理鼠标走行/页模式(deltaMode≠0), 触摸板走像素模式(deltaMode=0);
+  //   · Chrome/Safari 鼠标与触摸板都走像素模式, 但物理鼠标的 wheelDeltaY 恒为 120 的整数倍, 触摸板不是。
+  // 命中即触摸板 → 缩放灵敏度减半(两指滚动事件密集、累计过快); 鼠标滚轮维持原速一次一档。
+  function isTouchpad(e) {
+    if (e.ctrlKey) return true
+    if (e.deltaMode !== 0) return false                       // 行/页模式 = 鼠标滚轮
+    const wd = e.wheelDeltaY ?? e.wheelDelta                  // Chrome/Safari 物理鼠标: 120 整数倍
+    if (wd) return Math.abs(wd) % 120 !== 0
+    return true                                               // 像素模式且无 wheelDelta(Firefox 触摸板)
+  }
+  const onWheel = e => {
+    e.preventDefault(); const r = surf.getBoundingClientRect()
+    const base = e.deltaY < 0 ? 1.12 : 0.892
+    const factor = isTouchpad(e) ? 1 + (base - 1) * 0.5 : base   // 触摸板: 把相对 1.0 的缩放幅度砍半
+    zoomAt(e.clientX - r.left, e.clientY - r.top, factor)
+  }
   function hitAt(px, py) {       // 实时命中(用上一帧的 hitList, 不受 drag.active 清 hover 影响), 返回命中项
     let bd = 1e9, hit = null
     for (const it of hitList) { const d = (it.sx - px) ** 2 + (it.sy - py) ** 2; if (d < it.rad * it.rad && d < bd) { bd = d; hit = it } }
@@ -796,8 +815,8 @@ export function createTraceGlobe(canvas, opts = {}) {
       const k = 1 - Math.exp(-dt * 2.6)
       q = qSlerp(q, cam.q, k)
       cam.flyT += dt; if (cam.flyT > 1.7) cam.flying = false
-    } else if (!drag.active && !hover && !hold && mt === 0) {
-      q = qMul(q, qAxis(0, 0, 1, dt * 0.018))     // 绕地球自身极轴自转(任意朝向下都自然)
+    } else if (!drag.active && !hover && !hold && mt === 0 && !probes.length && !target) {
+      q = qMul(q, qAxis(0, 0, 1, dt * 0.018))     // 绕地球自身极轴自转(任意朝向下都自然); 有结果时静止
     }
     if (cam2.on) {                   // 2D 缓飞: 地图中心滑向目标
       const k = 1 - Math.exp(-dt * 2.6)
@@ -854,6 +873,7 @@ export function createTraceGlobe(canvas, opts = {}) {
     const dimAll = activeProbe != null
     // 1) 路径弧线(每段按 segGrow 生长; 非激活 probe 压暗)
     for (const p of probes) {
+      if (hidden.has(p.id)) continue
       const nodes = p._nodes; if (!nodes) continue
       const act = !dimAll || activeProbe === p.id
       const baseA = act ? 1 : .14
@@ -875,6 +895,7 @@ export function createTraceGlobe(canvas, opts = {}) {
 
     // 2) MTR「探测波」彗星 + 路径上的持续数据包
     for (const p of probes) {
+      if (hidden.has(p.id)) continue
       const nodes = p._nodes; if (!nodes || p._frontier < 0) continue
       const act = !dimAll || activeProbe === p.id
       const reach = p._frontier + (p.segGrow[p._frontier] || 0)    // 当前可到达的「连续段数」(含分数)
@@ -901,12 +922,13 @@ export function createTraceGlobe(canvas, opts = {}) {
     pktAcc += dt
     while (pktAcc > .5) {
       pktAcc -= .5
-      const done = probes.filter(p => p.status === 'done' && p.hops.length)
+      const done = probes.filter(p => p.status === 'done' && p.hops.length && !hidden.has(p.id))
       if (done.length) { const p = done[Math.floor(Math.random() * done.length)]; packets.push({ p, s: 0, spd: .55 + Math.random() * .25 }) }
     }
     for (let i = packets.length - 1; i >= 0; i--) {
       const pk = packets[i], p = pk.p, nodes = p._nodes
       pk.s += pk.spd * dt; if (!nodes || pk.s >= p.hops.length) { packets.splice(i, 1); continue }
+      if (hidden.has(p.id)) continue                     // 该 probe 已隐藏: 飞行中的包停止绘制(仍推进至消失)
       const si = Math.floor(pk.s), sf = pk.s - si
       const pt = arcPoint(nodes[si], nodes[si + 1], sf); if (pt.vz <= -.02) continue
       const act = !dimAll || activeProbe === p.id
@@ -951,6 +973,7 @@ export function createTraceGlobe(canvas, opts = {}) {
 
     // 5) 跳节点(小圆点, 按 probe 色)+ 监测点(发光大点 + 城市标签)
     for (const p of probes) {
+      if (hidden.has(p.id)) continue                     // 隐藏的 probe: 节点/源点不画, 也不进命中列表
       const nodes = p._nodes; if (!nodes) continue
       const act = !dimAll || activeProbe === p.id
       // 中途跳
@@ -1017,7 +1040,7 @@ export function createTraceGlobe(canvas, opts = {}) {
   raf = requestAnimationFrame(frame)
 
   return {
-    setData, setLocations, setHold, setMode, focus, recenter, reset, setHome,
+    setData, setLocations, setHold, setMode, focus, setHidden, recenter, reset, setHome,
     destroy() {
       cancelAnimationFrame(raf); ro.disconnect()
       window.removeEventListener('mousemove', onMove); surf.removeEventListener('mouseleave', onLeave); surf.removeEventListener('mousedown', onDown)

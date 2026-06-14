@@ -123,6 +123,8 @@ export const STRINGS = {
     rt_token_ph: 'NextTrace API token',
     rt_clear_sel: '清空所有选择', rt_hist_clear: '清空历史记录',
     rt_token_need: '需要 token 才能精确逐 IP 定位，', rt_token_get: '点此获取',
+    rt_noresp: '未响应', rt_hops_skipped: '跳未响应', rt_view_hops: '逐跳', rt_view_raw: '原始输出',
+    rt_hide_path: '在地球上隐藏此路径', rt_show_path: '在地球上显示此路径',
   },
   en: {
     page_title: 'PEER.AS — BGP, IP & ASN Insights',
@@ -243,6 +245,8 @@ export const STRINGS = {
     rt_token_ph: 'NextTrace API token',
     rt_clear_sel: 'Clear all selections', rt_hist_clear: 'Clear history',
     rt_token_need: 'A token is required for precise per-IP geolocation. ', rt_token_get: 'Get one',
+    rt_noresp: 'no response', rt_hops_skipped: 'hops no response', rt_view_hops: 'hops', rt_view_raw: 'raw',
+    rt_hide_path: 'Hide this path on the globe', rt_show_path: 'Show this path on the globe',
   },
 }
 

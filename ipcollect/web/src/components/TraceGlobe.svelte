@@ -5,7 +5,7 @@
   import { createTraceGlobe } from '../lib/traceglobe.js'
   import { ccLatLon, fetchTrace } from '../lib/geo.js'
 
-  let { model = null, locations = null, focusId = null, hold = false, mode2d = false, onpick = null, onhover = null, onlochover = null, onengine = null } = $props()
+  let { model = null, locations = null, focusId = null, hidden = null, hold = false, mode2d = false, onpick = null, onhover = null, onlochover = null, onengine = null } = $props()
 
   let canvasEl, hitEl, tipEl, ctrl
   // 初始视角定位到用户所在国家/地区: 用自有域 default.peer.as 的 trace 取 loc=国家码 → 国家质心经纬度。
@@ -27,6 +27,7 @@
   $effect(() => { if (locations) ctrl?.setLocations(locations) })
   $effect(() => { ctrl?.setHold(hold) })
   $effect(() => { ctrl?.focus(focusId) })
+  $effect(() => { ctrl?.setHidden(hidden) })
   $effect(() => { ctrl?.setMode(mode2d) })
 </script>
 

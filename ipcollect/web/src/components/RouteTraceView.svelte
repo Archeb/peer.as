@@ -9,7 +9,7 @@
   import { S } from '../lib/store.svelte.js'
   import { t } from '../lib/i18n.js'
   import { loadInsightFor } from '../lib/queries.js'
-  import { iPlay, iStop, iClose, iChevD, iChevR, iProbe, iClock, iGear, iInfinity, iSearch, iClear, iPlus, iCity, iCountry, iNet, iLoc, iRecenter } from '../lib/icons.js'
+  import { iPlay, iStop, iClose, iChevD, iChevR, iProbe, iClock, iGear, iInfinity, iSearch, iClear, iPlus, iCity, iCountry, iNet, iLoc, iRecenter, iVisible, iLowvis } from '../lib/icons.js'
   import { streamTrace } from '../lib/globalping.js'
   import { loadProbeLocations } from '../lib/trace-probes.js'
   import { setGeoSource } from '../lib/geo-resolve.js'
@@ -323,11 +323,32 @@
   function clearResults() {
     ctl?.cancel(); running = false
     trace = { target: null, probes: [] }
-    focusId = null; openRows = new Set(); ranFor = ''; S.trace.target = ''; errMsg = ''
+    focusId = null; openRows = new Set(); rawView = new Set(); hiddenProbes = new Set(); ranFor = ''; S.trace.target = ''; errMsg = ''
   }
   function submit(e) { e?.preventDefault(); launch() }
   function clearBox() { box = ''; inputEl?.focus() }
   function toggleRow(id) { const s = new Set(openRows); s.has(id) ? s.delete(id) : s.add(id); openRows = s }
+
+  // 逐跳详情里某监测点切到「原始输出」视图(灯箱式两态: 逐跳 / rawOutput)。
+  let rawView = $state(new Set())
+  function setRawView(id, raw) { const s = new Set(rawView); raw ? s.add(id) : s.delete(id); rawView = s }
+
+  // 隐藏某监测点的路径在地球上的显示(点 pdot 切换; 不影响列表逐跳详情)。传给 TraceGlobe 跳过绘制。
+  let hiddenProbes = $state(new Set())
+  function toggleHidden(id) { const s = new Set(hiddenProbes); s.has(id) ? s.delete(id) : s.add(id); hiddenProbes = s }
+
+  // 把逐跳富集成渲染列表: 在 TTL 不连续处(中间被 * 省略的跳)插入「N 跳未响应」缺口标记。
+  // 序号是真实 TTL, 故相邻两跳 idx 差 >1 即代表中间有未响应的跳; 开头(prev=0)留缺口表示首跳前的未响应。
+  function hopList(hops) {
+    const out = []; let prev = 0
+    for (const h of hops) {
+      const gap = h.idx - prev - 1
+      if (gap > 0) out.push({ gap, key: 'g' + h.idx })
+      out.push({ h, key: 'h' + h.idx })
+      prev = h.idx
+    }
+    return out
+  }
 
   let doneCount = $derived(trace.probes.filter(p => p.status === 'done').length)
   function pick(q) { loadInsightFor(q) }   // 点结果/地球里的 IP/ASN → 浮窗显示 insight(不离开本视图)
@@ -337,7 +358,7 @@
   <!-- 地球(占满视图、偏右); 在球上按下也收起历史下拉(拖地球时不留残影) -->
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div class="globe-stage" class:in={shown} class:booting onpointerdown={() => { dropOpen = false; if (document.activeElement && document.activeElement.blur) document.activeElement.blur() }}>
-    <TraceGlobe model={trace} locations={locInfo} {focusId} hold={!!hoverLoc} mode2d={map2d} onpick={pick} onlochover={onLocHover} onhover={(id) => (focusId = id)} onengine={(c) => (globeCtrl = c)} />
+    <TraceGlobe model={trace} locations={locInfo} {focusId} hidden={hiddenProbes} hold={!!hoverLoc} mode2d={map2d} onpick={pick} onlochover={onLocHover} onhover={(id) => (focusId = id)} onengine={(c) => (globeCtrl = c)} />
   </div>
 
   <!-- 右下角控制: 复位 + 2D/3D 投影切换(粒子形变转场) -->
@@ -520,19 +541,32 @@
               {#each trace.probes as p (p.id)}
                 {@const isPing = trace.type === 'ping'}
                 {@const hops = p.hops}
-                {@const last = hops[hops.length - 1]}
                 {@const st = p.stats}
+                {@const done = p.status === 'done'}
+                {@const tgtHop = hops.find(h => h.isTarget)}
+                {@const reached = !!tgtHop}
+                {@const phid = hiddenProbes.has(p.id)}
                 <div class="pcard" class:focus={focusId === p.id}
                      onmouseenter={() => (focusId = p.id)} onmouseleave={() => (focusId = null)} role="presentation">
                   <button class="prow" style:--pc={p.colorHex} onclick={() => toggleRow(p.id)}>
-                    <span class="pdot" style:background={p.colorHex}></span>
+                    <!-- pdot: 平时是该监测点的色点; hover 显示眼睛 → 点一下切换它的路径在地球上的显隐 -->
+                    <!-- svelte-ignore a11y_no_static_element_interactions -->
+                    <span class="pdot" class:phid role="button" tabindex="0"
+                          title={phid ? t('rt_show_path') : t('rt_hide_path')} aria-pressed={phid}
+                          onclick={(e) => { e.stopPropagation(); toggleHidden(p.id) }}
+                          onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.stopPropagation(); e.preventDefault(); toggleHidden(p.id) } }}>
+                      <span class="pdot-c" style:background={p.colorHex}></span>
+                      <span class="pdot-eye"><Fa icon={phid ? iLowvis : iVisible} /></span>
+                    </span>
                     <span class="pname">{p.city}<i class="asn">AS{p.asn}</i></span>
                     <!-- 中间: 每个小点 = 一轮结果, 按延迟光谱蓝→绿→黄→红着色 -->
                     <span class="rounds">{#each p.rounds || [] as r}<i style:background={roundColor(r)}></i>{/each}</span>
-                    <span class="pstat" class:run={p.status === 'probing'}>
+                    <!-- 目标未响应(trace/mtr 到目标无回包)如实标「未响应」, 不再拿最后一个有回包的跳冒充目标延迟 -->
+                    <span class="pstat" class:run={p.status === 'probing'} class:noresp={done && !isPing && !reached}>
                       {#if p.status !== 'done'}<span class="spin"></span>{isPing ? '' : hops.length}
                       {:else if isPing}{st ? st.avg : '—'}<u>ms</u>{#if st && st.loss}<b class="loss">{st.loss}%</b>{/if}
-                      {:else}{last?.rtt ?? '—'}<u>ms</u>{/if}
+                      {:else if reached}{tgtHop.rtt ?? '—'}<u>ms</u>
+                      {:else}{t('rt_noresp')}{/if}
                     </span>
                     <Fa icon={openRows.has(p.id) ? iChevD : iChevR} />
                   </button>
@@ -550,19 +584,49 @@
                         {#if p.raw}<pre class="raw">{p.raw}</pre>{/if}
                       </div>
                     {:else}
-                      <ol class="hops">
-                        {#each hops as h (h.idx)}
-                          <li class:tgt={h.isTarget}>
-                            <span class="hn">{h.idx}</span>
-                            <span class="hip">
-                              <button class="hlink hip-ip" onclick={() => pick(h.ip)} title={h.name}>{h.ip}</button>
-                              {#if h.asn}<button class="hlink hip-asn" onclick={() => pick('AS' + h.asn)} title={h.name}>AS{h.asn}</button>{/if}
-                            </span>
-                            <span class="hgeo">{h.city || h.cc || ''}</span>
-                            <span class="hrtt">{h.rtt == null ? '*' : h.rtt}<u>{h.rtt == null ? '' : 'ms'}</u>{#if h.loss}<b class="loss">{h.loss}%</b>{/if}</span>
-                          </li>
-                        {/each}
-                      </ol>
+                      {#if rawView.has(p.id) && p.raw}
+                        <pre class="raw">{p.raw}</pre>
+                      {:else}
+                        <ol class="hops">
+                          {#each hopList(hops) as row (row.key)}
+                            {#if row.gap}
+                              <!-- 中间被 * 省略的未响应跳: 折叠成一行「N 跳未响应」 -->
+                              <li class="gaprow"><span class="hn">⋯</span><span class="gaptxt">{row.gap} {t('rt_hops_skipped')}</span></li>
+                            {:else}
+                              {@const h = row.h}
+                              <li class:tgt={h.isTarget}>
+                                <span class="hn">{h.idx}</span>
+                                <span class="hip">
+                                  <button class="hlink hip-ip" onclick={() => pick(h.ip)} title={h.name}>{h.ip}</button>
+                                  {#if h.asn}<button class="hlink hip-asn" onclick={() => pick('AS' + h.asn)} title={h.name}>AS{h.asn}</button>{/if}
+                                </span>
+                                <span class="hgeo">{h.city || h.cc || ''}</span>
+                                <span class="hrtt">{h.rtt == null ? '*' : h.rtt}<u>{h.rtt == null ? '' : 'ms'}</u>{#if h.loss}<b class="loss">{h.loss}%</b>{/if}</span>
+                              </li>
+                            {/if}
+                          {/each}
+                          <!-- 目标始终没回包: 末尾补一行标注目标未响应 -->
+                          {#if done && !reached}
+                            <li class="tgt">
+                              <span class="hn">·</span>
+                              <span class="hip">
+                                {#if trace.target?.ip}<button class="hlink hip-ip" onclick={() => pick(trace.target.ip)}>{trace.target.ip}</button>{:else}<span class="hip-ip">{trace.target?.label || box}</span>{/if}
+                              </span>
+                              <span class="hgeo">{trace.target?.city || ''}</span>
+                              <span class="hrtt noresp">{t('rt_noresp')}</span>
+                            </li>
+                          {/if}
+                        </ol>
+                      {/if}
+                      <!-- 灯箱式切换点: 逐跳 ↔ 原始输出 -->
+                      {#if p.raw}
+                        <div class="viewdots" role="group" aria-label="{t('rt_view_hops')} / {t('rt_view_raw')}">
+                          <button class="vdot" class:on={!rawView.has(p.id)} onclick={() => setRawView(p.id, false)}
+                                  title={t('rt_view_hops')} aria-label={t('rt_view_hops')} aria-pressed={!rawView.has(p.id)}></button>
+                          <button class="vdot" class:on={rawView.has(p.id)} onclick={() => setRawView(p.id, true)}
+                                  title={t('rt_view_raw')} aria-label={t('rt_view_raw')} aria-pressed={rawView.has(p.id)}></button>
+                        </div>
+                      {/if}
                     {/if}
                   {/if}
                 </div>
@@ -927,7 +991,25 @@
     background: transparent; border: 0; cursor: pointer; padding: 9px 11px; text-align: left; color: var(--fg);
   }
   .prow :global(svg) { width: 10px; color: var(--muted); }
-  .pdot { width: 9px; height: 9px; border-radius: 50%; }
+  /* pdot = 隐藏切换钮: 平时显色点, hover 浮现眼睛(示意可点切换地球上该路径显隐) */
+  .pdot {
+    position: relative; width: 16px; height: 16px; flex: 0 0 auto; cursor: pointer;
+    display: inline-flex; align-items: center; justify-content: center; border-radius: 50%;
+    transition: background .14s;
+  }
+  .pdot:hover { background: color-mix(in srgb, var(--fg) 9%, transparent); }
+  .pdot-c { width: 9px; height: 9px; border-radius: 50%; transition: opacity .14s; }
+  .pdot-eye {
+    position: absolute; inset: 0; display: inline-flex; align-items: center; justify-content: center;
+    opacity: 0; transition: opacity .14s; pointer-events: none;
+  }
+  .pdot :global(svg) { width: 11px; height: 11px; color: var(--fg); }
+  .pdot:hover .pdot-c { opacity: 0; }
+  .pdot:hover .pdot-eye { opacity: 1; }
+  /* 已隐藏态: 常显划线眼睛 + 色点压暗, 明确标示该路径已从地球移除 */
+  .pdot.phid .pdot-c { opacity: .25; }
+  .pdot.phid .pdot-eye { opacity: .85; }
+  .pdot.phid:hover .pdot-eye { opacity: 1; }
   .pname { font: 600 13px var(--sans); display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
   .pname .asn { font: 600 10px var(--mono); letter-spacing: .03em; color: var(--muted); border: 1px solid var(--line); border-radius: 4px; padding: 1px 4px; font-style: normal; }
   /* 中间: 每轮结果小点(比 pdot 小, 不发光), 按光谱着色; 溢出时显示最新的(靠右) */
@@ -956,6 +1038,27 @@
   .hrtt u { color: var(--muted); text-decoration: none; font-size: 9.5px; margin-left: 1px; }
   .hrtt .loss { color: #ef4444; margin-left: 5px; font-size: 10px; }
   .pstat .loss { color: #ef4444; font: 600 10px var(--mono); }
+
+  /* 目标未响应: 概要列与逐跳末行的延迟列均如实标「未响应」, 灰显与有效延迟区分(不再冒充末跳延迟) */
+  .pstat.noresp { color: var(--muted); font-weight: 600; font-size: 11px; letter-spacing: .02em; }
+  .hrtt.noresp { color: var(--muted); font-weight: 600; font-size: 10.5px; }
+
+  /* 中间被 * 省略的未响应跳: 折叠成一行「N 跳未响应」(两列: 序号占位 + 文案) */
+  .gaprow { grid-template-columns: 16px 1fr !important; opacity: .72; }
+  .gaptxt { font: 500 10.5px var(--sans); font-style: italic; color: var(--muted); }
+
+  /* 非 ping 逐跳详情里切到原始输出: 与 .hops 一致的内边距/上分隔 */
+  .pcard > .raw { margin: 7px 11px 4px; }
+
+  /* 灯箱式视图切换点(逐跳 ↔ 原始输出) */
+  .viewdots { display: flex; justify-content: center; gap: 7px; padding: 5px 0 9px; }
+  .vdot {
+    width: 7px; height: 7px; padding: 0; border-radius: 50%; cursor: pointer;
+    border: 1px solid color-mix(in srgb, var(--muted) 55%, transparent); background: transparent;
+    transition: background .15s, border-color .15s, transform .15s;
+  }
+  .vdot:hover { border-color: var(--accent); transform: scale(1.18); }
+  .vdot.on { background: var(--accent); border-color: var(--accent); }
 
   /* ping 详情: stats 摘要 + 原始输出(rawOutput) */
   .pingdet { border-top: 1px solid var(--line2); padding: 8px 11px 10px; display: flex; flex-direction: column; gap: 7px; }
