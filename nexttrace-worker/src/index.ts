@@ -68,8 +68,33 @@ function ntGeoResult(ip: string, j: any, zh: boolean): GeoResult | null {
   }
 }
 
+// NextTrace 单批最大 IP 数:超过的等下一批(批与批串行, 见 geoForIps 的 for 循环)。
+const NT_BATCH_MAX = 10
+
+// 一批 IP → { ip: IPGeoData }。POST NextTrace batch;失败(网络错 / 非 2xx)重试 1 次, 两次都失败返回空 Map
+// (该批无 geo, 前端退化为无坐标, 不阻塞整体)。
+async function ntBatchGeo(chunk: string[], token: string): Promise<Map<string, any>> {
+  const map = new Map<string, any>()
+  for (let attempt = 0; attempt < 2; attempt++) {       // 首次 + 失败后重试 1 次
+    try {
+      const r = await fetch(NT_BATCH, {
+        method: 'POST',
+        headers: { 'X-NextTrace-Token': token, 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({ ips: chunk }),
+      })
+      if (r.ok) {
+        const j: any = await r.json()
+        for (const it of (j.results || [])) if (it && it.ok && it.data) map.set(it.ip, it.data)
+        return map
+      }
+      // 非 2xx → 落到下一轮重试
+    } catch { /* 网络错误 → 落到下一轮重试 */ }
+  }
+  return map
+}
+
 // 一组 IP → { ip: GeoResult }。边缘 Cache API 按 (lang,ip) 缓存(IP geo 稳定, 反复轮询只查新 IP);
-// 缓存未命中的批量查 NextTrace(每 64 一组)。某 IP 无 geo → 不出现在结果里(前端视为无坐标)。
+// 缓存未命中的批量查 NextTrace(每 NT_BATCH_MAX 一组, 批间串行)。某 IP 无 geo → 不出现在结果里(前端视为无坐标)。
 async function geoForIps(ips: string[], token: string, zh: boolean, ctx: ExecutionContext): Promise<Record<string, GeoResult>> {
   const out: Record<string, GeoResult> = {}
   const cache = caches.default
@@ -80,17 +105,9 @@ async function geoForIps(ips: string[], token: string, zh: boolean, ctx: Executi
     if (hit) { try { out[ip] = await hit.json() } catch { miss.push(ip) } }
     else miss.push(ip)
   }))
-  for (let i = 0; i < miss.length; i += 64) {
-    const chunk = miss.slice(i, i + 64)
-    const map = new Map<string, any>()
-    try {
-      const r = await fetch(NT_BATCH, {
-        method: 'POST',
-        headers: { 'X-NextTrace-Token': token, 'Content-Type': 'application/json', Accept: 'application/json' },
-        body: JSON.stringify({ ips: chunk }),
-      })
-      if (r.ok) { const j: any = await r.json(); for (const it of (j.results || [])) if (it && it.ok && it.data) map.set(it.ip, it.data) }
-    } catch { /* NextTrace 故障: 该批无 geo, 前端退化为无坐标(不阻塞) */ }
+  for (let i = 0; i < miss.length; i += NT_BATCH_MAX) {
+    const chunk = miss.slice(i, i + NT_BATCH_MAX)
+    const map = await ntBatchGeo(chunk, token)
     for (const ip of chunk) {
       const g = map.has(ip) ? ntGeoResult(ip, map.get(ip), zh) : null
       if (g) {
