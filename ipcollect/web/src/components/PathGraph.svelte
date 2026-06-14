@@ -35,7 +35,16 @@
     justPanned = pan.moved
     pan = null
   }
-  const go = asn => { if (justPanned) return; showAsn(asn) }
+  // ── 点击选中模式 ──
+  // 第一次点击节点 → 进入选中(高亮像 hover 一样保持); 再点同一节点 → 跳转该 ASN;
+  // 点击空白处 → 退出选中。选中态下仍可拖拽平移看长路由(justPanned 吞掉拖拽尾随的 click)。
+  function onNodeClick(ev, asn) {
+    ev.stopPropagation()                       // 阻止冒泡到背景, 否则会被 onBgClick 立刻清掉
+    if (justPanned) return                      // 刚拖完: 不当作点击
+    if (selected === asn) { showAsn(asn); return }
+    selected = asn
+  }
+  function onBgClick() { if (justPanned) return; selected = null }
 
   const NW = 120, NH = 34, COLG = 56, ROWG = 14, HEAD = 26
   // 距离轴标签(语言感知): 横轴 = 到 origin 的 AS 跳数; 第 0 列就是 origin。
@@ -159,9 +168,12 @@
   }
   let g = $derived(compute(rec))
   // hover/focus 某节点 → 高亮"到这个 node 的所有可达线路", 并在每条边中点显示其 peer 权重。
+  // 选中(点击)优先于 hover: 一旦选中, hover 不再改变高亮, 直到点空白处退出。
   let hovered = $state(null)
-  let hoverSet = $derived(hovered != null && g ? g.nodeEdges[hovered] : null)
-  let hoverCells = $derived(hovered != null && g ? g.nodeCells[hovered] : null)
+  let selected = $state(null)
+  let active = $derived(selected != null ? selected : hovered)
+  let hoverSet = $derived(active != null && g ? g.nodeEdges[active] : null)
+  let hoverCells = $derived(active != null && g ? g.nodeCells[active] : null)
 </script>
 
 {#if g}
@@ -172,9 +184,9 @@
     </g>
   {/snippet}
   {#snippet node(b, dim, hot)}
-    <g class="gnode nav" class:origin={b.origin} class:tier1={b.t1} class:hilite={hot} class:gdimnode={dim}
+    <g class="gnode nav" class:origin={b.origin} class:tier1={b.t1} class:hilite={hot} class:armed={selected === b.asn} class:gdimnode={dim}
       role="button" tabindex="0" aria-label="AS{b.asn}"
-      onclick={() => go(b.asn)} onkeydown={(ev) => goKey(ev, b.asn)}
+      onclick={(ev) => onNodeClick(ev, b.asn)} onkeydown={(ev) => goKey(ev, b.asn)}
       onmouseenter={() => hovered = b.asn} onmouseleave={() => { if (hovered === b.asn) hovered = null }}
       onfocus={() => hovered = b.asn} onblur={() => { if (hovered === b.asn) hovered = null }}>
       <rect x={b.x - NW / 2} y={b.y - NH / 2} width={NW} height={NH} rx="5" />
@@ -183,7 +195,7 @@
     </g>
   {/snippet}
   <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div class="graphwrap" class:grabbing={!!pan} bind:this={wrap}
+  <div class="graphwrap" class:grabbing={!!pan} bind:this={wrap} onclick={onBgClick}
        onpointerdown={onPanDown} onpointermove={onPanMove} onpointerup={onPanUp} onpointercancel={onPanUp}>
     <svg viewBox="0 0 {g.W} {g.H}" width={g.W} height={g.H} class="pathsvg" class:hovering={!!hoverSet}>
       <!-- 距离轴: 每列一条淡竖线 + 到 origin 的跳数标签 -->
@@ -196,8 +208,8 @@
         {#each g.edges as e}{#if !hoverSet.has(e.key)}{@render edge(e, true, false)}{/if}{/each}
         {#each g.boxes as b}{#if !hoverCells?.has(b.ck)}{@render node(b, true, false)}{/if}{/each}
         {#each g.edges as e}{#if hoverSet.has(e.key)}{@render edge(e, false, true)}{/if}{/each}
-        {#each g.boxes as b}{#if hoverCells?.has(b.ck) && hovered !== b.asn}{@render node(b, false, false)}{/if}{/each}
-        {#each g.boxes as b}{#if hovered === b.asn}{@render node(b, false, true)}{/if}{/each}
+        {#each g.boxes as b}{#if hoverCells?.has(b.ck) && active !== b.asn}{@render node(b, false, false)}{/if}{/each}
+        {#each g.boxes as b}{#if active === b.asn}{@render node(b, false, true)}{/if}{/each}
       {:else}
         {#each g.edges as e}{@render edge(e, false, false)}{/each}
         {#each g.boxes as b}{@render node(b, false, false)}{/each}
@@ -227,6 +239,7 @@
   .gnode rect { fill: var(--bg); stroke: var(--muted); stroke-width: 1.4; }
   .gnode.nav { cursor: pointer; }
   .gnode.nav:hover rect { stroke: var(--accent); stroke-width: 2.2; }
+  .gnode.nav:focus { outline: none; }
   .gnode.nav:focus-visible { outline: none; }
   .gnode.nav:focus-visible rect { stroke: var(--accent); stroke-width: 2.6; }
   .gnode :global(.gas) { font: 700 11px var(--mono); fill: var(--fg); text-anchor: middle; dominant-baseline: middle; }
@@ -235,4 +248,6 @@
   .gnode.tier1 :global(.gas) { fill: var(--signal); }
   .gnode.origin rect { fill: color-mix(in srgb, var(--accent) 14%, var(--bg)); stroke: var(--accent); stroke-width: 2; }
   .gnode.hilite rect { stroke: var(--accent); stroke-width: 2.6; }
+  /* armed = 已选中, 再点一次即跳转: 实心强调 + 虚线描边提示"待跳转" */
+  .gnode.armed rect { fill: color-mix(in srgb, var(--accent) 22%, var(--bg)); stroke: var(--accent); stroke-width: 3; stroke-dasharray: 4 3; }
 </style>
