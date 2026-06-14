@@ -103,19 +103,32 @@ def download(url: str, dest: Optional[str] = None, force: bool = False, retries:
     util.ensure_dirs()
     if dest is None:
         dest = str(util.MRT_CACHE_DIR / os.path.basename(url))
+    vpath = dest + ".etag"   # 远端校验值(etag/last-modified)旁车: content-length 不可得时用它判定新鲜度
     if os.path.exists(dest) and not force:
+        remote, rv = 0, ""
         try:
             head = requests.head(url, timeout=30)
             remote = int(head.headers.get("content-length", 0))
+            rv = head.headers.get("etag") or head.headers.get("last-modified") or ""
         except Exception:
-            remote = 0
+            pass
         local = os.path.getsize(dest)
-        if remote == 0 or local == remote:
+        if remote and local == remote:
             util.log(f"  复用已下载 MRT: {dest} ({util.human_bytes(local)})")
             return dest
-        util.log(f"  本地大小 {local} != 远端 {remote}, 重新下载")
+        if not remote:   # content-length 不可得(如 Cloudflare 命中缓存): 退回用 etag/last-modified 判定
+            cached_v = ""
+            try:
+                cached_v = open(vpath).read().strip()
+            except Exception:
+                pass
+            if rv and cached_v == rv:
+                util.log(f"  复用已下载 MRT: {dest} ({util.human_bytes(local)}, 远端未变)")
+                return dest
+        util.log(f"  本地与远端不一致(local={util.human_bytes(local)}, remote={util.human_bytes(remote) if remote else '?'}), 重新下载")
     tmp = dest + ".part"
     util.log(f"  下载 {url}")
+    dl_validator = ""
     for attempt in range(1, retries + 1):
         got = os.path.getsize(tmp) if os.path.exists(tmp) else 0
         headers = {"Range": f"bytes={got}-"} if got else {}
@@ -126,6 +139,7 @@ def download(url: str, dest: Optional[str] = None, force: bool = False, retries:
                 elif got and r.status_code == 416:  # 已下全(range 越界) -> 当作完成
                     r.close(); break
                 r.raise_for_status()
+                dl_validator = r.headers.get("etag") or r.headers.get("last-modified") or ""
                 total = int(r.headers.get("content-length", 0)) + got
                 done = got
                 last = time.time()
@@ -145,6 +159,12 @@ def download(url: str, dest: Optional[str] = None, force: bool = False, retries:
             util.log(f"  ! 下载中断({type(e).__name__}: {e}); {wait}s 后续传(第 {attempt}/{retries} 次, 已 {util.human_bytes(os.path.getsize(tmp) if os.path.exists(tmp) else 0)})", err=True)
             time.sleep(wait)
     os.replace(tmp, dest)
+    if dl_validator:   # 记录本次下载对应的远端校验值, 供下次 content-length 缺失时判新鲜度
+        try:
+            with open(vpath, "w") as vf:
+                vf.write(dl_validator)
+        except Exception:
+            pass
     util.log(f"  下载完成: {dest} ({util.human_bytes(os.path.getsize(dest))})")
     return dest
 
