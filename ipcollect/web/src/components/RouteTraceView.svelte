@@ -558,7 +558,19 @@
                       <span class="pdot-c" style:background={p.colorHex}></span>
                       <span class="pdot-eye"><Fa icon={phid ? iLowvis : iVisible} /></span>
                     </span>
-                    <span class="pname">{p.city}<i class="asn">AS{p.asn}</i></span>
+                    <span class="pname">
+                      <span class="pcity">{p.city}</span>
+                      <!-- AS 号 + 注册名/Org(对齐 SelfProbe 风格); 点击下钻 ASN 详情(stopPropagation 不展开行) -->
+                      {#if p.asn}
+                        <!-- svelte-ignore a11y_no_static_element_interactions -->
+                        <span class="asbadge" role="button" tabindex="0"
+                              title={'AS' + p.asn + (p.network ? ' · ' + p.network : '')}
+                              onclick={(e) => { e.stopPropagation(); pick('AS' + p.asn) }}
+                              onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.stopPropagation(); e.preventDefault(); pick('AS' + p.asn) } }}>
+                          <span class="asnum">AS{p.asn}</span>{#if p.network}<span class="asname">{p.network}</span>{/if}
+                        </span>
+                      {/if}
+                    </span>
                     <!-- 中间: 每个小点 = 一轮结果, 按延迟光谱蓝→绿→黄→红着色 -->
                     <span class="rounds">{#each p.rounds || [] as r}<i style:background={roundColor(r)}></i>{/each}</span>
                     <!-- 目标未响应(trace/mtr 到目标无回包)如实标「未响应」, 不再拿最后一个有回包的跳冒充目标延迟 -->
@@ -597,8 +609,16 @@
                               <li class:tgt={h.isTarget}>
                                 <span class="hn">{h.idx}</span>
                                 <span class="hip">
-                                  <button class="hlink hip-ip" onclick={() => pick(h.ip)} title={h.name}>{h.ip}</button>
-                                  {#if h.asn}<button class="hlink hip-asn" onclick={() => pick('AS' + h.asn)} title={h.name}>AS{h.asn}</button>{/if}
+                                  <!-- IP 显示为 「rdns (ip)」(无 rdns 则仅 ip); 点击下钻前缀详情 -->
+                                  <button class="hlink hip-ip" onclick={() => pick(h.ip)} title={h.rdns ? h.rdns + ' (' + h.ip + ')' : h.ip}>
+                                    {#if h.rdns}<span class="rdns">{h.rdns}</span> <span class="ippar">({h.ip})</span>{:else}{h.ip}{/if}
+                                  </button>
+                                  {#if h.asn}
+                                    <!-- 只放注册名/Org 名牌(去掉 ASxxxx); 无名时退回 AS 号当名牌文案。点击下钻 ASN 详情 -->
+                                    <button class="hlink hip-asn" onclick={() => pick('AS' + h.asn)} title={'AS' + h.asn + (h.name ? ' · ' + h.name : '')}>
+                                      <span class="asname">{h.name || 'AS' + h.asn}</span>
+                                    </button>
+                                  {/if}
                                 </span>
                                 <span class="hgeo">{h.city || h.cc || ''}</span>
                                 <span class="hrtt">{h.rtt == null ? '*' : h.rtt}<u>{h.rtt == null ? '' : 'ms'}</u>{#if h.loss}<b class="loss">{h.loss}%</b>{/if}</span>
@@ -1010,8 +1030,18 @@
   .pdot.phid .pdot-c { opacity: .25; }
   .pdot.phid .pdot-eye { opacity: .85; }
   .pdot.phid:hover .pdot-eye { opacity: 1; }
-  .pname { font: 600 13px var(--sans); display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
-  .pname .asn { font: 600 10px var(--mono); letter-spacing: .03em; color: var(--muted); border: 1px solid var(--line); border-radius: 4px; padding: 1px 4px; font-style: normal; }
+  .pname { font: 600 13px var(--sans); display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; min-width: 0; }
+  .pcity { flex: 0 0 auto; }
+
+  /* ASxxxx + 注册名/Org 名牌(对齐 SelfProbe): probe 名里的 AS(.asbadge, 可点) + 每跳的 AS(.hip-asn) 共用 */
+  .asbadge { display: inline-flex; align-items: center; gap: 5px; min-width: 0; cursor: pointer; }
+  .asbadge:hover .asnum { text-decoration: underline; text-underline-offset: 2px; }
+  .asnum { flex: 0 0 auto; font: 600 11.5px var(--mono); color: var(--link); }
+  .asname {
+    flex: 0 1 auto; font: 600 10px var(--sans); color: var(--muted); line-height: 1;
+    background: var(--alt); border: 1px solid var(--line); border-radius: 5px; padding: 2px 5px;
+    max-width: 124px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
   /* 中间: 每轮结果小点(比 pdot 小, 不发光), 按光谱着色; 溢出时显示最新的(靠右) */
   .rounds { display: flex; align-items: center; justify-content: flex-end; gap: 3px; min-width: 0; overflow: hidden; }
   .rounds i { flex: 0 0 auto; width: 5px; height: 5px; border-radius: 50%; }
@@ -1028,11 +1058,14 @@
   /* IP 与 ASN 各自独立可点(分别导航到前缀 / ASN 详情) */
   .hip { min-width: 0; display: inline-flex; align-items: baseline; gap: 6px; overflow: hidden; }
   .hlink { background: transparent; border: 0; padding: 0; cursor: pointer; text-align: left; font-family: var(--mono); }
-  .hlink:hover { text-decoration: underline; }
   .hip-ip { flex: 0 1 auto; min-width: 0; font: 500 12px var(--mono); color: var(--link); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .hip-asn { flex: 0 0 auto; font-size: 10.5px; color: var(--muted); }
-  .hip-asn:hover { color: var(--link); }
-  .hops li.tgt .hip-ip { color: var(--signal); }
+  .hip-ip .rdns { color: var(--link); }                       /* rdns 为主, IP 跟在括号里弱化 */
+  .hip-ip .ippar { color: var(--muted); font-size: 11px; }
+  .hip-ip:hover .rdns, .hip-ip:hover { text-decoration: underline; }
+  /* AS 名牌(hops 里只放注册名/Org 名牌): hover 高亮名牌本身 */
+  .hip-asn { flex: 0 0 auto; display: inline-flex; align-items: center; min-width: 0; }
+  .hip-asn:hover .asname { color: var(--link); border-color: color-mix(in srgb, var(--link) 45%, var(--line)); }
+  .hops li.tgt .hip-ip, .hops li.tgt .hip-ip .rdns { color: var(--signal); }
   .hgeo { font: 500 11px var(--sans); color: var(--muted); text-align: right; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 96px; justify-self: end; }
   .hrtt { font: 600 11.5px var(--mono); color: var(--fg); text-align: right; white-space: nowrap; }
   .hrtt u { color: var(--muted); text-decoration: none; font-size: 9.5px; margin-left: 1px; }

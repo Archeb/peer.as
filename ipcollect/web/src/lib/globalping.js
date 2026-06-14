@@ -155,7 +155,7 @@ async function buildHops(res, type, targetIp, geo) {
   if (type === 'ping') {
     const rtt = hopRtt({ stats: r.stats, timings: r.timings })
     const g = await geoOf(tgtIp)
-    if (!badGeo(g)) out.push(mkHop(1, tgtIp, g, rtt, r.stats?.loss ?? 0, true, asnName(g.asn)))
+    if (!badGeo(g)) out.push(mkHop(1, tgtIp, g, rtt, r.stats?.loss ?? 0, true, asnName(g?.asn), g?.asn, r.resolvedHostname))
     return out
   }
   const hops = r.hops || []
@@ -167,17 +167,19 @@ async function buildHops(res, type, targetIp, geo) {
     const g = await geoOf(ip)
     const asn = (h.asn && h.asn.length ? h.asn[0] : null) ?? (g && g.asn) ?? 0
     const disp = (g && !badGeo(g)) ? g : (g ? { ...g, lat: null, lon: null } : null)
-    out.push(mkHop(i + 1, ip, disp, hopRtt(h), h.stats?.loss ?? 0, ip === tgtIp, asnName(asn) || h.resolvedHostname || '', asn))
+    // name = AS 注册名/Org(供 ASxxxx 旁的名牌); rdns = 反向解析主机名(供 IP 前的 "rdns (ip)" 展示), 两者分开存。
+    out.push(mkHop(i + 1, ip, disp, hopRtt(h), h.stats?.loss ?? 0, ip === tgtIp, asnName(asn), asn, h.resolvedHostname))
   }
   // 命中目标地址者标 target; 若都没命中, 把最后一跳当落地(不强标 target, 目标靶标仍由 onInit 的 target 画)
   const hit = out.find(o => o.ip === tgtIp)
   if (hit) hit.isTarget = true
   return out
 }
-function mkHop(idx, ip, g, rtt, loss, isTarget, name, asn) {
+function mkHop(idx, ip, g, rtt, loss, isTarget, name, asn, rdns) {
   g = g || {}   // 私网 / 无效地理: 无 geo 对象, 仅保留 idx/ip/asn/rtt, 坐标置空(不落地球)
   return {
-    idx, ip: ip || null, asn: asn ?? g.asn ?? 0, name: name || asnName(g.asn) || '',
+    // rdns 与 ip 相同(无 PTR, globalping 回填了地址本身)视为无 rdns → 前端只显示 IP, 不加括号。
+    idx, ip: ip || null, asn: asn ?? g.asn ?? 0, name: name || asnName(g.asn) || '', rdns: (rdns && rdns !== ip) ? rdns : '',
     cc: g.cc || '', city: g.city || '', lat: g.lat ?? null, lon: g.lon ?? null,
     rtt: rtt == null ? null : rtt, loss: Math.round(loss || 0), isTarget: !!isTarget,
   }
