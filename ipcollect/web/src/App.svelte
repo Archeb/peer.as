@@ -2,7 +2,7 @@
   import { onMount } from 'svelte'
   import Fa from 'svelte-fa'
   import { S } from './lib/store.svelte.js'
-  import { getData, configure, ensureEngine } from './lib/db.js'
+  import { configure, ensureEngine, ensureMeta } from './lib/db.js'
   import { applyTheme, setLang } from './lib/ui.js'
   import { ccLabel } from './lib/bgp.js'
   import { applyRoute, hardCloseDetail, clearDetail } from './lib/queries.js'
@@ -72,7 +72,8 @@
     // meta.json 必须拿最新的(它带 version, 决定其它文件的 ?v=); no-cache 强制条件请求(未变则 304, 变了取新)。
     // getData 带回退: 选定宿主(可能是 CN VPS)失败时整体回退 CF。失败置 fatal(路由视图显示), 但不 return ——
     // WHOIS 视图不依赖 meta, 仍要能用; 故继续 applyRoute。
-    try { S.meta = await getData('/meta.json', { cache: 'no-cache' }) }
+    // ensureMeta(): 与按需查询(SelfProbe 触发的 ensureEngine)共用同一 promise, 去重且消除「引擎先于 meta 就绪」竞态。
+    try { await ensureMeta() }
     catch (e) { S.fatal = `meta.json: ${e.message}（先跑 ipc export-parquet）` }
 
     const cc0 = qp.get('cc'); if (cc0) S.filters.cc = ccLabel(cc0.toUpperCase())

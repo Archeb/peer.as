@@ -209,14 +209,32 @@ export async function initDuck() {
   await tuneSession()
 }
 
+// meta.json 单次加载(它带 version, 决定其它文件的 ?v=, 以及 files 文件清单)。**App 启动与任何按需查询
+// 共用这一个 promise** —— 关键: 首页自助探测(SelfProbe)在 meta 到位前就会触发 ensureEngine, 若引擎抢先就绪而
+// S.meta 仍为 null, enrichIp 读到的文件清单是空数组 -> read_parquet([]) 抛错 -> 误报「库内无前缀覆盖」。
+// 让 ensureEngine 也经此等到 meta 即可堵死该竞态。幂等; 失败不缓存(允许重试)。no-cache: 条件请求拿最新。
+let _metaPromise = null
+export function ensureMeta() {
+  if (S.meta) return Promise.resolve(S.meta)
+  if (!_metaPromise) {
+    _metaPromise = getData('/meta.json', { cache: 'no-cache' })
+      .then(m => { S.meta = m; return m })
+      .catch(e => { _metaPromise = null; throw e })
+  }
+  return _metaPromise
+}
+
 // 惰性初始化「路由分析」引擎: DuckDB-WASM(34MB+) + 全量 ASN 名(~1MB)/org 表。
 // **WHOIS 视图不需要引擎**(纯 RDAP/网络), 故直开 /whois 不加载; 切到路由分析(或路由 URL)时才调。
-// 幂等: 缓存 promise, 只跑一次; 成功置 S.ready, 失败置 S.fatal 并重置(允许后续重试)。需先有 S.meta(version 决定 ?v=)。
+// 幂等: 缓存 promise, 只跑一次; 成功置 S.ready, 失败置 S.fatal 并重置(允许后续重试)。
+// 先 await ensureMeta(): version 决定 ?v=, 且 ready 之后的查询要靠 meta.files 取文件清单(否则空文件清单误报无覆盖)。
 let _enginePromise = null
 export function ensureEngine() {
   if (_enginePromise) return _enginePromise
   _enginePromise = (async () => {
     S.loading = true
+    // meta 失败不阻断引擎初始化(App 会另置 fatal); 但 happy path 必须等到, 否则查询读空文件清单。
+    try { await ensureMeta() } catch (e) { /* meta 不可达: 查询将空, App 已置 fatal */ }
     const asnP = getData(`/asnames.json${dv()}`).then(n => { S.asnNames = n }).catch(() => {})
     const orgP = getData(`/asnorg.json${dv()}`).then(o => { S.asnOrg = o }).catch(() => {})
     try { await initDuck() }
