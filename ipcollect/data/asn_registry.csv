@@ -254,6 +254,23 @@ asn,name,name_en,op
 23851,重庆有线,Chongqing CNC Broadband,其他
 7641,中国广电,China Broadcasting TV Net,其他
 23771,陕西广电网络,SXBCTV,其他
+# 香港
+4760,香港电讯,HKT,其他
+9269,香港宽频,HKBN,其他
+9381,汇港电讯,WTT,其他
+9304,环球全域电讯,HGC,其他
+9908,有线宽频,i-CABLE,其他
+17924,数码通,SmarTone,其他
+4635,香港互联网交换中心,HKIX,其他
+# 澳门
+4609,澳门电讯,CTM,其他
+131159,MTel电信,MTel,其他
+# 台湾
+3462,中華電信,HiNet,其他
+1659,臺灣學術網路,TANet,其他
+9924,台灣固网,TFN,其他
+4780,遠傳電信,SEEDNET,其他
+9919,新世紀資通,NCIC,其他
 # ── 国际 ──
 55996,塞浦路斯电信(中国),Cypress Telecom China,国际
 37965,Pacnet,Pacnet,国际
