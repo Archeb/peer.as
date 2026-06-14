@@ -135,7 +135,7 @@
 <ExportModal />
 
 <style>
-  .app { display: flex; min-height: 100vh; }
+  .app { display: flex; min-height: 100vh; min-height: 100dvh; }
   .main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
   /* 左上角开合按钮: 固定悬浮, 用主题 token 与页面同色(明暗自适应)。抽屉收起时常驻。 */
   .sidetoggle {
@@ -158,7 +158,10 @@
   .fatal b { color: #e06c6c; }
   @media (max-width: 820px) {
     .app { flex-direction: column; }
-    .content { padding: 4px 12px 24px; }
+    /* 底部留出 iOS/安卓浏览器底栏 + 刘海安全区, 左右留出横屏刘海 → 内容不被系统 UI 遮住 */
+    .content {
+      padding: 4px calc(12px + env(safe-area-inset-right, 0px)) calc(24px + env(safe-area-inset-bottom, 0px)) calc(12px + env(safe-area-inset-left, 0px));
+    }
     .sidetoggle { display: none; }   /* 移动端用 MobileBar 的菜单钮 */
   }
 </style>

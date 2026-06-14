@@ -77,31 +77,40 @@
   @media (max-width: 820px) {
     .mbar {
       display: flex; align-items: center; justify-content: space-between;
-      position: sticky; top: 0; z-index: 8; padding: 10px 14px;
-      background: linear-gradient(180deg, #0a0e15, #070a0f); border-bottom: 1px solid #182234;
+      position: sticky; top: 0; z-index: 8;
+      /* 顶部 + 左右安全区: 横屏刘海/状态栏不遮 logo 与菜单钮 */
+      padding: calc(10px + env(safe-area-inset-top, 0px)) calc(14px + env(safe-area-inset-right, 0px)) 10px calc(14px + env(safe-area-inset-left, 0px));
+      /* 配色跟随主题(明/暗), 与桌面侧栏同一套 token */
+      background: linear-gradient(180deg, var(--panel), var(--bg)); border-bottom: 1px solid var(--line);
     }
-    .logo { font: 800 17px/1 var(--mono); letter-spacing: -.01em; color: #f3f6fa; display: flex; align-items: center; background: none; border: 0; padding: 0; cursor: pointer; }
+    .logo { font: 800 17px/1 var(--mono); letter-spacing: -.01em; color: var(--fg); display: flex; align-items: center; background: none; border: 0; padding: 0; cursor: pointer; }
     .logo .hi { color: var(--accent); }
-    .logo .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); margin-right: 9px; box-shadow: 0 0 10px var(--accent); }
+    .logo .dot { display: none; }   /* 移动端不显示状态点 */
     .menubtn {
       display: inline-flex; align-items: center; justify-content: center; width: 38px; height: 38px;
-      background: transparent; border: 1px solid #25324a; border-radius: 8px; color: #cfd8e6;
+      background: transparent; border: 1px solid var(--line); border-radius: 8px; color: var(--fg);
       font-size: 16px; cursor: pointer;
     }
-    .menubtn:active { background: #131c2b; }
+    .menubtn:active { background: var(--alt); }
 
     .scrim { position: fixed; inset: 0; z-index: 9; background: rgba(2, 6, 14, .5); }
     .menu {
-      position: fixed; top: 58px; right: 10px; left: 10px; z-index: 10;
+      position: fixed;
+      top: calc(58px + env(safe-area-inset-top, 0px));
+      right: calc(10px + env(safe-area-inset-right, 0px)); left: calc(10px + env(safe-area-inset-left, 0px)); z-index: 10;
       background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
       box-shadow: 0 20px 60px rgba(0, 0, 0, .5); padding: 14px 16px;
       display: flex; flex-direction: column; gap: 12px; animation: drop .14s ease;
+      /* 菜单过高(四宫格 + 统计 + 链接)时内部滚动, 底部留安全区, 不被系统底栏裁掉 */
+      max-height: calc(100dvh - 70px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
+      overflow: auto;
     }
     @keyframes drop { from { opacity: 0; transform: translateY(-6px); } }
 
-    .vnav { display: flex; gap: 6px; }
+    /* 四个视图功能: 双栏四宫格 */
+    .vnav { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
     .vnav .vitem {
-      flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+      display: inline-flex; align-items: center; justify-content: center; gap: 7px;
       background: transparent; border: 1px solid var(--line); border-radius: 8px;
       padding: 10px 8px; font: 600 12.5px var(--sans); color: var(--fg); cursor: pointer;
     }

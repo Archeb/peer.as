@@ -727,7 +727,7 @@
 <style>
   /* 视图: 深空底 + 点阵网格 + 顶部 accent 辉光(同 WhoisView 约定) */
   .rtv {
-    flex: 1; min-width: 0; display: flex; flex-direction: column; min-height: 100vh;
+    flex: 1; min-width: 0; display: flex; flex-direction: column; min-height: 100vh; min-height: 100dvh;
     position: relative; overflow: hidden; container-type: inline-size;
     background:
       radial-gradient(1200px 520px at 76% -160px, var(--accent-dim), transparent 70%),
@@ -766,7 +766,7 @@
     box-shadow: 0 30px 70px -36px rgba(0,0,0,.7), inset 0 1px 0 color-mix(in srgb, #fff 6%, transparent);
     backdrop-filter: blur(16px) saturate(1.2); -webkit-backdrop-filter: blur(16px) saturate(1.2);
     padding: 8px 18px 18px; display: flex; flex-direction: column; gap: 12px;
-    max-height: calc(100vh - 24px); overflow: hidden; will-change: left, top, width, height;
+    max-height: calc(100dvh - 24px); overflow: hidden; will-change: left, top, width, height;
   }
   .panel.dragging { user-select: none; }
 

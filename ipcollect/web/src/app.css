@@ -37,7 +37,7 @@ body {
   font-family: var(--sans); background: var(--bg); color: var(--fg); font-size: 13px;
   -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility;
 }
-#app { min-height: 100vh; }
+#app { min-height: 100vh; min-height: 100dvh; }
 ::selection { background: var(--accent-dim); }
 
 /* badge / 运营商配色 (数据语义, 全局) */

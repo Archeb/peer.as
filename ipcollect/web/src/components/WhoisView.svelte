@@ -179,7 +179,7 @@
 <style>
   /* 视图配色: 暗色为运营商终端, 亮色为干净变体(沿用全局 token)。背景= 点阵网格 + 顶部 accent 辉光。 */
   .wv {
-    flex: 1; min-width: 0; display: flex; flex-direction: column; min-height: 100vh;
+    flex: 1; min-width: 0; display: flex; flex-direction: column; min-height: 100vh; min-height: 100dvh;
     position: relative; overflow: hidden;            /* 地球/字标定位上下文 + 裁到 view 内 */
     container-type: inline-size;                      /* 供 @container 判断内容区宽度(地球太窄退场) */
     background:
@@ -393,7 +393,8 @@
   .more:hover :global(svg) { transform: translateX(3px); }
 
   @media (max-width: 820px) {
-    .scroll { padding: 14px 8px 36px; }
+    /* 底部 + 左右安全区: 避开 iOS/安卓底栏与横屏刘海 */
+    .scroll { padding: 14px calc(8px + env(safe-area-inset-right, 0px)) calc(36px + env(safe-area-inset-bottom, 0px)) calc(8px + env(safe-area-inset-left, 0px)); }
     /* 居中沿用桌面同一套(.scroll 的 safe center): 卡少时居中, 单列过高自动退回顶对齐。 */
     /* 移动端: spwrap 常显(露出 SelfProbe 里的「摊开」按钮); 卡堆默认隐藏由 SelfProbe 内部(.stage)控制。 */
     .console { flex-wrap: wrap; height: auto; padding: 10px 12px; gap: 8px 10px; }
