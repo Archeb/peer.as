@@ -197,7 +197,8 @@ deploy_cf(){
   rm -f "$STAGE"/assets/*.wasm 2>/dev/null || true
   # 数据走 R2(peer-as-data.opentrace.app)时, Pages 不再托管 dist/data —— 逃 CF Pages 单文件≤25MiB / 单部署≤2万文件上限。
   # 保留 dist/duckdb-ext(parquet 扩展 ~3MB, 前端走同源, 见 db.js setupExtensions)。
-  if [ -n "${R2_BUCKET:-}" ]; then
+  # **仅 peeras(CN_MIRROR=1)**: R2 桶只装 peeras 全表; dn42 是单站 CF Pages、数据同源, 绝不移除(与前端 cnMirror 收口一致)。
+  if [ -n "${R2_BUCKET:-}" ] && [ "$CN_MIRROR" = 1 ]; then
     rm -rf "$STAGE/data" 2>/dev/null || true
     log "CF: 数据走 R2($R2_BUCKET)，已从 Pages 暂存株移除 dist/data（仅部署前端 + duckdb-ext）"
   fi
@@ -215,10 +216,11 @@ deploy_r2(){
 }
 # 并行推送: R2(数据, 仅 --data) ∥ CN(rsync 整站) ∥ CF(wrangler 暂存株)。三者互不冲突(deploy_cf 不动 dist/)。
 # 互锁: 等都结束再继续(verify 要各端已切版本)。CN best-effort(函数内吞失败); R2/CF 失败=中止。
-# R2 仅在 TARGET≠cn(海外由 R2 供数据) 且 WITH_DATA=1(数据有变) 且配了桶时跑; 纯前端部署(WITH_DATA=0)R2 数据不变, 跳过。
+# R2 仅在 peeras(CN_MIRROR=1) 且 TARGET≠cn(海外由 R2 供数据) 且 WITH_DATA=1(数据有变) 且配了桶时跑;
+# 纯前端部署(WITH_DATA=0)R2 数据不变跳过; dn42(CN_MIRROR=0)是单站 CF Pages、永不碰 R2。
 CN_PID= ; CF_PID= ; R2_PID= ; CF_RC=0 ; R2_RC=0
 { [ "$TARGET" != cf ] && [ "$CN_MIRROR" = 1 ]; } && { deploy_cn & CN_PID=$!; }
-{ [ "$TARGET" != cn ] && [ "$WITH_DATA" = 1 ] && [ -n "${R2_BUCKET:-}" ]; } && { deploy_r2 & R2_PID=$!; }
+{ [ "$TARGET" != cn ] && [ "$CN_MIRROR" = 1 ] && [ "$WITH_DATA" = 1 ] && [ -n "${R2_BUCKET:-}" ]; } && { deploy_r2 & R2_PID=$!; }
 [ "$TARGET" != cn ] && { deploy_cf & CF_PID=$!; }
 [ -n "$CN_PID" ] && { wait "$CN_PID" || true; }
 [ -n "$R2_PID" ] && { wait "$R2_PID" || R2_RC=$?; }
@@ -238,7 +240,7 @@ verify(){
     if [ "$got" = "$le" ]; then log "校验: ✓ $h 入口一致"; else log "校验: ⚠ $h 入口=${got:-空}（缓存/传播中?需复查）"; fi
   done
   # R2 海外数据宿主校验: peer-as-data.opentrace.app/meta.json 应返回 JSON。需自定义域名已绑定 + Cache 规则生效。
-  if [ "$TARGET" != cn ] && [ -n "${R2_BUCKET:-}" ] && [ -n "${VITE_DATA_BASE:-}" ]; then
+  if [ "$TARGET" != cn ] && [ "$CN_MIRROR" = 1 ] && [ -n "${R2_BUCKET:-}" ] && [ -n "${VITE_DATA_BASE:-}" ]; then
     local rm1; rm1="$(curl -fsS --max-time 20 "${VITE_DATA_BASE%/}/meta.json" 2>/dev/null | head -c1 || true)"
     if [ "$rm1" = "{" ]; then log "R2: ✓ ${VITE_DATA_BASE} 数据可达（meta.json）"
     else log "R2: ⚠ ${VITE_DATA_BASE}/meta.json 不可达/非 JSON —— 自定义域名绑定了? Cache 规则? CORS?（海外数据将取不到）"; fi
