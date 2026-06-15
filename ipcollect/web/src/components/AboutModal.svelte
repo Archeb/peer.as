@@ -15,21 +15,10 @@
         <span class="en">A static, reproducible in-browser explorer of the global IPv4/IPv6 BGP table — every prefix, its
         origin ASNs, and the real AS_PATHs reaching it. Runs fully client-side; no backend, API or database.</span></p>
 
-      <h3>方法 / Approach</h3>
-      <ul>
-        <li><b>AS_PATH 才是信号</b>：看有哪些 ASN、按什么顺序——搜 <code>23764 4809</code> 指两者在路径中<b>相邻</b>
-          （<code>1299 23764 4809</code> ≠ <code>1299 4809</code>）。
-          <span class="en">The AS_PATH is the signal — which ASNs, in what order; a match means consecutive hops.</span></li>
-        <li><b>不评判线路质量</b>：公网 collector 分不出 CN2/GIA（常共用 AS），只展示路径、不打分；origin AS 仅作标注。
-          <span class="en">No line-quality scoring; origin AS is display-only.</span></li>
-        <li><b>多归属自然浮现</b>：collector RIB 是 per-peer 的，一个前缀的多条去重路径即观测到的 multihome，直接来自数据、非推断。
-          <span class="en">Per-peer RIB ⇒ distinct paths are observed multihoming, straight from the data.</span></li>
-      </ul>
-
       <h3>数据与架构 / Data &amp; stack</h3>
       <ul>
-        <li><b>数据</b>：RIPE RIS <code>rrc01</code>+<code>rrc06</code> 全表 IPv4/IPv6 MRT RIB（入库不过滤），地理按地理库（ipdb 国内城市 + GeoLite 国际城市）切成各地区子段。
-          <span class="en">RIPE RIS rrc01+rrc06 full IPv4/IPv6 RIB; prefixes carved into regions by geo DBs (ipdb for CN cities + GeoLite for intl cities).</span></li>
+        <li><b>数据</b>：来自 <b>RouteViews</b> 与 <b>RIPE RIS</b> 的全表 MRT RIB Dump（IPv4/IPv6）。
+          <span class="en">Full-table MRT RIB dumps from RouteViews and RIPE RIS (IPv4/IPv6).</span></li>
         <li><b>查询</b>：导出 <b>Parquet</b>，浏览器内 <b>DuckDB-WASM</b> 直查；靠 <code>meta.json</code> 区间索引只取查询所需的少数分片。
           <span class="en">Parquet queried in-browser by DuckDB-WASM, fetching only the shards a query needs.</span></li>
         <li><b>可复现</b>：数据源公开，任何人都能重跑流水线、重建同一份站点。
@@ -44,6 +33,7 @@
       <p class="disc"><b>免责 / Disclaimer</b>：仅是 rrc00 各 peer 的去程视角；父子段基于已采集前缀、可能不全；城市级精度取决于地理库。
         公开近似快照，仅供 BGP 研究 / 学习，<b>不作运营决策依据</b>。
         <span class="en">Outbound view of rrc00's peers; coverage may be partial. Approximate public snapshot — research/education only, not authoritative.</span></p>
+      <p class="egg">✨ 试试点击 10 次首页 logo。<span class="en">Try tapping the homepage logo 10 times.</span></p>
     </div>
   </div>
 {/if}
@@ -67,4 +57,6 @@
   .en { display: block; color: var(--muted); margin-top: 2px; }
   .disc .en { display: inline; }
   .disc { color: var(--muted); font-size: 12px; border-top: 1px solid var(--line2); margin-top: 16px; padding-top: 13px; }
+  .egg { color: var(--accent); font-size: 12px; margin-top: 8px; }
+  .egg .en { display: inline; color: var(--muted); margin-left: 4px; }
 </style>
