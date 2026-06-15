@@ -9,17 +9,20 @@
   import { genAgo, genUtc } from '../lib/clock.svelte.js'
   import { iMenu, iClose, iPrefix, iPath, iGlobal, iClock, iTheme, iLang, iAbout, iRepo, iIssue, iChangelog, iNodes, iWhois, iProbe, iSatellite } from '../lib/icons.js'
   import { brand, features } from '../lib/site.js'
+  import logoBa from '../assets/peeras-ba.png'
 
   let counts = $derived(S.meta?.counts || {})
   let nCountry = $derived((S.meta?.countries || []).length)
   let fmt = n => (n ?? '—') === '—' ? '—' : Number(n).toLocaleString()
-  let themeLabel = $derived({ auto: 'AUTO', light: 'LIGHT', dark: 'DARK' }[S.theme] || 'AUTO')
+  let themeLabel = $derived({ auto: 'AUTO', light: 'LIGHT', dark: 'DARK', ba: 'BA' }[S.theme] || 'AUTO')
   const close = () => (S.menu = false)
   const openModal = k => { S.menu = false; S[k] = true }
 </script>
 
 <header class="mbar">
-  <button class="logo" onclick={() => { S.menu = false; goHome() }} aria-label={t('home')}><span class="dot"></span>{brand.main}<span class="hi">{brand.hi}</span></button>
+  <button class="logo" class:img={S.theme === 'ba'} onclick={() => { S.menu = false; goHome() }} aria-label={t('home')}>
+    {#if S.theme === 'ba'}<img class="logo-img" src={logoBa} alt="{brand.main}{brand.hi}" />{:else}<span class="dot"></span>{brand.main}<span class="hi">{brand.hi}</span>{/if}
+  </button>
   <button class="menubtn" onclick={() => (S.menu = !S.menu)} aria-label={t('menu')} aria-expanded={S.menu}>
     <Fa icon={S.menu ? iClose : iMenu} />
   </button>
@@ -86,6 +89,8 @@
     .logo { font: 800 17px/1 var(--mono); letter-spacing: -.01em; color: var(--fg); display: flex; align-items: center; background: none; border: 0; padding: 0; cursor: pointer; }
     .logo .hi { color: var(--accent); }
     .logo .dot { display: none; }   /* 移动端不显示状态点 */
+    .logo.img { padding: 0; }
+    .logo .logo-img { display: block; height: 26px; width: auto; max-width: 150px; object-fit: contain; }
     .menubtn {
       display: inline-flex; align-items: center; justify-content: center; width: 38px; height: 38px;
       background: transparent; border: 1px solid var(--line); border-radius: 8px; color: var(--fg);

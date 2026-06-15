@@ -29,6 +29,68 @@
   --rowhover: #101b2a; --hit: rgba(251, 191, 36, .10); --hit-h: rgba(251, 191, 36, .17);
 }
 
+/* ── "Blue Archive" 主题 ────────────────────────────────────────────────
+ * 明亮、未来感、学院风的 sci-fi OS 界面。配色逻辑:
+ *  基底白  纯白 + 极浅冷灰 → 大面积背景 / 面板内衬 / 激活按钮的(浅色)文字
+ *  主调蓝  高饱和天空蓝 #02D3FB → 主要交互 / 核心状态 / 主导航高亮
+ *  辅助粉  柔和樱花/霓虹粉 #FF6FAE → 次级操作 / 通知 / 蓝粉双子切换态
+ *  深色文本 深午夜蓝 #0B2538(绝不用纯黑) → 纯白/粉/蓝背景上都保持高清晰度
+ * 全主题圆角统一 2px。token 为底, 结构层在下方 [data-theme=ba] 段单独叠加。 */
+:root[data-theme=ba] { color-scheme: light;
+  --bg: #ffffff; --panel: #ffffff; --alt: #eef2f6; --line: #c8d9ea; --line2: #dce8f4;
+  --fg: #0b2538; --muted: #5a7187;
+  --accent: #02d3fb; --accent-h: #0098cf; --accent-fg: #ffffff; --accent-dim: rgba(2, 211, 251, .14);
+  --accent2: #ff6fae; --accent2-h: #ff4f9c; --accent2-fg: #ffffff; --accent2-dim: rgba(255, 111, 174, .16);
+  --signal: #f5a623; --link: #0093c4; --code: #0e7490; --inbg: #ffffff;
+  --rowhover: #e6f7fc; --hit: rgba(245, 166, 35, .10); --hit-h: rgba(245, 166, 35, .18);
+}
+
+/* 结构层: 仅 BA 主题生效。提高优先级(:root[...] 后代选择器)以压过组件作用域样式。 */
+/* 全部圆角统一 2px —— 含圆形指示点 / 胶囊 / 角标, 贯彻直角语言 */
+:root[data-theme=ba] *,
+:root[data-theme=ba] *::before,
+:root[data-theme=ba] *::after { border-radius: 2px !important; }
+/* 背景纯白(不加蓝/粉渐变, 避免页面透蓝) */
+/* chrome 用不透明纯白(避免半透明穿字), 纯白内衬保留 OS 面板质感 */
+:root[data-theme=ba] .side,
+:root[data-theme=ba] .mbar,
+:root[data-theme=ba] .menu {
+  background: linear-gradient(180deg, #ffffff, #eef4fb);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .6);
+}
+/* 顶部过滤栏: 纯色 #eef4fb(不用渐变) + 青色科技饰条 */
+:root[data-theme=ba] .topbar { background: #eef4fb; box-shadow: inset 0 2px 0 -1px var(--accent); }
+/* 悬停反色微交互 —— 主调蓝: 主导航 / 中性控件翻青底浅字 */
+:root[data-theme=ba] .ghost:hover,
+:root[data-theme=ba] .pgbtn:hover:not(:disabled),
+:root[data-theme=ba] .sideclose:hover {
+  background: var(--accent); color: var(--accent-fg); border-color: var(--accent);
+}
+/* 辅助粉 与主调蓝同等地位 ── 次级操作: WHOIS / 语言切换 / 帮助 / 导出, 悬停翻粉底浅字 */
+:root[data-theme=ba] .whoisbtn { color: var(--accent2-h); border-color: color-mix(in srgb, var(--accent2) 55%, var(--line)); }
+:root[data-theme=ba] .whoisbtn:hover:not(:disabled),
+:root[data-theme=ba] .helpbtn:hover,
+:root[data-theme=ba] .expbtn:hover:not(:disabled),
+:root[data-theme=ba] .ctl .ghost:first-child:hover {
+  background: var(--accent2); color: var(--accent2-fg); border-color: var(--accent2); filter: none;
+}
+/* 族(All/v4/v6)= 蓝粉双子切换态 → 选中胶囊用粉 */
+:root[data-theme=ba] .famseg .fampill { background: var(--accent2); box-shadow: 0 2px 8px var(--accent2-dim); }
+/* 中性 ASN 角标(无运营商分类, 全表最常见的 badge)= 粉; 运营商语义色(op-*)/状态色保持不变。
+   注: badge 的 --c 同时作前景(文字)与 16% 底色, 故用更深的玫红保证文字与粉底有足够对比, 不撞色。 */
+:root[data-theme=ba] .b-mute { --c: #d6336c; }
+/* 选区高亮也用粉, 与蓝色 chrome 进一步平衡到 1:1 */
+:root[data-theme=ba] ::selection { background: var(--accent2-dim); }
+/* 当前视图导航: 主调蓝激活态。阴影收浅, 左侧 accent 竖条去辉光 */
+:root[data-theme=ba] .vitem.on {
+  background: var(--accent-dim); border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent-dim);
+}
+:root[data-theme=ba] .vitem.on::before { box-shadow: none; }
+:root[data-theme=ba] ::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--accent) 45%, transparent); background-clip: content-box; border-radius: 2px;
+}
+
 * { box-sizing: border-box; }
 html, body { margin: 0; }
 /* 文档级滚动条溝常驻: 出结果/切视图时滚动条出现也不挤窄正文 → 居中内容不再左右抖 */

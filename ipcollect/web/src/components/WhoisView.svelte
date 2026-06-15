@@ -12,10 +12,12 @@
   import { regionName, asnName } from '../lib/bgp.js'
   import { fetchTrace, ccLatLon } from '../lib/geo.js'
   import { iSearch, iArrowR, iClose, iNodes } from '../lib/icons.js'
+  import { tapLogo } from '../lib/ui.js'
   import MobileBar from './MobileBar.svelte'
   import Whois from './Whois.svelte'
   import Doodle from './Doodle.svelte'
   import SelfProbe from './SelfProbe.svelte'
+  import logoBig from '../assets/peeras-ba-hero.png'
 
   // ── 首页 3D 地球 doodle(纯装饰)──────────────────────────────────
   // 起点 = 用户连接 IP + 国家(cloudflare trace); 只画"你自己"这条连接的路由, 加载一次。
@@ -115,7 +117,12 @@
     <div class="col" class:wide={S.probeExpanded}>
       <!-- PEER.AS 字标: 查询框正上方, 与查询框作为一组纵向居中; 出结果时折叠淡出 -->
       <div class="wordmark" class:in={bgShown} class:gone={S.whois.kind || S.probeExpanded} class:booting aria-hidden="true">
-        <div class="word" style:transform={wordTransform}><span class="p">PEER.</span><span class="a">AS</span></div>
+        <!-- 彩蛋: 连点大字标 10 次解锁 Blue Archive 主题 -->
+        <div class="word" class:img={S.theme === 'ba'} style:transform={wordTransform}
+             role="button" tabindex="-1" onclick={tapLogo}
+             onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') tapLogo() }}>
+          {#if S.theme === 'ba'}<img class="word-img" src={logoBig} alt="PEER.AS" />{:else}<span class="p">PEER.</span><span class="a">AS</span>{/if}
+        </div>
       </div>
 
       <form class="console" onsubmit={submit}>
@@ -221,6 +228,7 @@
     letter-spacing: -.045em; white-space: nowrap;
     transform-style: preserve-3d; user-select: none; will-change: transform;
     transition: transform .3s ease;                  /* 视差平滑 */
+    cursor: pointer;                                 /* 彩蛋: 连点 10 次解锁 BA 主题 */
   }
   .wordmark span {
     text-shadow:
@@ -233,6 +241,12 @@
     :global(:root:not([data-theme])) .wordmark { --w1: #566f88; --w1e: #232e38; --w2: #b08f5b; --w2e: #3f3220; }
   }
   :global(:root[data-theme='dark']) .wordmark { --w1: #566f88; --w1e: #232e38; --w2: #b08f5b; --w2e: #3f3220; }
+  /* BA 主题: 大字标换成蓝+粉 logo 图(仍随 .word 做视差/折叠) */
+  .wordmark .word.img { letter-spacing: 0; }
+  .wordmark .word-img {
+    display: block; height: clamp(88px, 19vw, 176px); width: auto; max-width: 86vw;
+    filter: drop-shadow(4px 6px 10px rgba(0, 0, 0, .18));
+  }
 
   /* ── 右侧 3D 地球侧景 stage ──
      一个大方块绝对定位在 view 右侧, 用 translateX 把"球心"推出右边缘, 只露出左侧约 1/3 球面

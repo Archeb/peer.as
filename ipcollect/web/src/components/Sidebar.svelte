@@ -7,18 +7,23 @@
   import { genAgo, genUtc } from '../lib/clock.svelte.js'
   import { iPrefix, iPath, iGlobal, iClock, iTheme, iLang, iAbout, iRepo, iIssue, iChangelog, iNodes, iWhois, iProbe, iClose, iSatellite } from '../lib/icons.js'
   import { brand, features } from '../lib/site.js'
+  import logoBa from '../assets/peeras-ba.png'
 
   let counts = $derived(S.meta?.counts || {})
   let nCountry = $derived((S.meta?.countries || []).length)
   let fmt = n => (n ?? '—') === '—' ? '—' : Number(n).toLocaleString()
-  let themeLabel = $derived({ auto: 'AUTO', light: 'LIGHT', dark: 'DARK' }[S.theme] || 'AUTO')
+  let themeLabel = $derived({ auto: 'AUTO', light: 'LIGHT', dark: 'DARK', ba: 'BA' }[S.theme] || 'AUTO')
 </script>
 
 {#if S.side}<div class="scrim" onclick={() => (S.side = false)} role="presentation"></div>{/if}
 <aside class="side" class:open={S.side}>
   <div class="brand">
-    <button class="logo" onclick={() => { S.side = false; goHome() }} title={t('home')} aria-label={t('home')}>
-      <span class="dot"></span>{brand.main}<span class="hi">{brand.hi}</span>
+    <button class="logo" class:img={S.theme === 'ba'} onclick={() => { S.side = false; goHome() }} title={t('home')} aria-label={t('home')}>
+      {#if S.theme === 'ba'}
+        <img class="logo-img" src={logoBa} alt="{brand.main}{brand.hi}" />
+      {:else}
+        <span class="dot"></span>{brand.main}<span class="hi">{brand.hi}</span>
+      {/if}
     </button>
     <button class="sideclose" onclick={() => (S.side = false)} title={t('menu')} aria-label={t('menu')}>
       <Fa icon={iClose} />
@@ -115,6 +120,8 @@
     background: none; border: 0; padding: 0; cursor: pointer; transition: opacity .14s;
   }
   .brand .logo:hover { opacity: .82; }
+  .brand .logo.img { padding: 0; }
+  .brand .logo .logo-img { display: block; height: 32px; width: auto; max-width: 168px; object-fit: contain; }
   .brand .logo .hi { color: var(--accent); }
   .brand .logo .dot {
     width: 8px; height: 8px; border-radius: 50%; background: var(--accent);
