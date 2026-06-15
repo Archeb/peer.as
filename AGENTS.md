@@ -287,7 +287,7 @@ print(c.execute('SELECT family,count(*) FROM prefix GROUP BY family').fetchall()
 3. `git push origin dev:main`。**GitOps 的唯一真源是 `origin/main`；不 push 到 main，线上 ≤8h 会被 cron 回滚。**
 4. **从主 checkout** `cd /home/aosc/test-ip-collect && scripts/deploy.sh`：
    - 只动前端/代码 → 无 flag（复用现有数据）；改了数据/要全重推 v4+v6 → `--data`。
-   - 它自己会 GitOps ff 到 origin/main、`npm build`、数据闸校验、推 **CF + CN** 两端、末尾核两端入口一致。
+   - 它自己会 GitOps ff 到 origin/main、`npm build`、数据闸校验、推 **R2(数据,仅 --data) + CF(前端) + CN(镜像)**、末尾核入口一致 + R2 数据可达。
    - **绝不在缺 `.env` 的 worktree 跑 deploy.sh**（CN 静默跳过→两端 meta 不一致）；**绝不手敲 wrangler/rsync/手动 build**。
 5. 成功 = 日志末尾打印 `完成 ✅`（含「✓ peer.as 入口一致」「✓ cn.peer.as 入口一致」）。**dn42 站由它自己的 10min cron 从 origin/main 自动同步，无需手动部署。**
 
@@ -361,26 +361,37 @@ test -f dist/index.html && grep -oE 'assets/index-[^"]+\.js' dist/index.html   #
 curl -s -o /dev/null -w "%{http_code}\n" https://peer.as/                        # 或 bgp-insights.pages.dev
 ```
 
-### 数据分发：同源 + CN 整站镜像（2026-06 起；**已弃用 R2**）
+### 数据分发：R2 海外数据宿主 + CN 整站镜像（2026-06-15 起；数据从 Pages 剥离迁回 R2）
 
-**为什么弃 R2**:DuckDB-WASM 前端实测**不发 Range、整片下载分片**(<25MiB 直接整取;本地带日志服务器 + 对生产用 CDP
-抓 Web Worker 流量两路验证一致)。所以 R2 相对同源 Pages **无传输收益**,反而其公开 egress 是**被刷爆账单的风险**。
-故移除 R2,数据全部**同源**。**真正决定每次查询下载量的是 meta 索引的文件级裁剪**(`read_parquet` 只取相关分片整下;
-单查实测:小国 geo ~10KB、US ~44MB、**IP/CIDR 经 `prefixes_ip` 区间索引裁到 1 个 ~2MB 分片**(原恒读整套 ~24MB, 见前端要点)、
-origin-ASN 经 `pathsearch_origin` 索引 ~1/N 分片、**纯 AS_PATH 无 origin = 最坏全扫所有 pathsearch**)。优化方向是"减少整下
-字节"(更细分片 + 连续 ip_start/origin 排序 + 区间索引 + meta 文件级裁剪),不是 Range。
+**海外数据宿主 = R2(`peer-as-data.opentrace.app`, 桶 `peer-as-data`)。** 历史上曾"同源 Pages /data"(当时弃 R2, 判断"无传输收益 +
+egress 账单风险"),但 **CF Pages 硬上限**逼回 R2:**单文件 ≤25MiB**(最大 parquet 分片已 ~19.5MB、增长中会破)、
+**单部署 ≤2万文件**。故海外数据迁独立 R2 桶, 绑自定义域名 `peer-as-data.opentrace.app`(构建期 `VITE_DATA_BASE` 注入前端)。
+**当年"egress 账单"其实是误判**:R2 egress 本就免费, 计费的是 Class B(GET); **绑自定义域名 + 边缘缓存**(对象
+`Cache-Control: max-age=86400`(meta.json 短) + 前端 `?v=` 失效)命中即不计 Class B —— 与 Pages 同样免费。CORS=`*`(公共数据)。
+前端**仍整片下载分片、不靠 Range**(R2/Pages 皆 CDN 缓存, 查询速度一致)。**真正决定每次查询下载量的是 meta 索引的文件级裁剪**
+(`read_parquet` 只取相关分片整下; 单查实测:小国 geo ~10KB、US ~44MB、**IP/CIDR 经 `prefixes_ip` 区间索引裁到 1 个 ~2MB
+分片**、origin-ASN 经 `pathsearch_origin` 索引 ~1/N 分片、**纯 AS_PATH 无 origin = 最坏全扫所有 pathsearch**)。优化方向是
+"减少整下字节"(更细分片 + 连续 ip_start/origin 排序 + 区间索引 + meta 文件级裁剪),不是 Range。
 
-**两个独立整站,目录完全一致,任一域名都能用:**
-- **`peer.as` = CF Pages**:`wrangler pages deploy dist` 部署前端 + `dist/data`(同源 `/data`)。海外主站。
-- **`cn.peer.as` = CN 优化 VPS(Caddy)**:`deploy.sh` 的 CN 步 rsync **整个 dist(前端 + 数据 + 打包的 wasm)** 过去。境内主站。
+**上传/部署**:`deploy.sh --data` 在 export 后并行跑 `scripts/r2-sync.sh dist/data peer-as-data`(并行 wrangler put、
+排除 dotfile、**meta.json 最后传**原子切版本、任一分片失败=中止)同步到 R2; 同时 `deploy_cf` **从 Pages 暂存株删除
+`dist/data`**(只留前端 + duckdb-ext)。纯前端部署(无 `--data`)不碰 R2(数据未变)。**wasm/parquet 扩展不迁 R2**:仍同源
+(CN VPS 自托管;CF 节点扩展走同源 duckdb-ext、大 wasm 回退 CDN, 见下)。**首次启用前**:CF 控制台给桶绑 `peer-as-data.opentrace.app`
+自定义域名(+ 建议 Cache 规则 Cache Everything)。
 
-**前端选源(`db.js configure()`,App.svelte onMount 最先调;无 `VITE_DATA_BASE` 了)**:
-1. `location.hostname === cn.peer.as` ⇒ **同源相对**(数据 `/data`)。edge=cn。
-2. 否则(在 CF Pages,或 GeoDNS 把 peer.as 解到 CN 机器):探同源 `GET /cdn-cgi/trace`(CF 才有)。
-   - `loc=CN`(确在 CF Pages 且身处境内,即 **GeoDNS 没生效拿到 CF IP**)⇒ 健康探测 `cn.peer.as/data/meta.json`,
-     通了把数据切到 `cn.peer.as`(**带回退**:不通则保持同源 CF)。edge=cn。
-   - 否则(海外,或 GeoDNS 已把 peer.as 解到 CN 机器——此时 trace 取不到 ⇒ 当非 CN)⇒ **同源**(本机即正确源)。
-   覆盖:`VITE_CN_BASE`(默认 `https://cn.peer.as`)。
+**整站布局(目录一致,任一域名都能用):**
+- **`peer.as` = CF Pages**(前端 + duckdb-ext) + **`peer-as-data.opentrace.app` = R2**(海外数据)。海外主站。
+- **`cn.peer.as` = CN 优化 VPS(Caddy)**:`deploy.sh` 的 CN 步 rsync **整个 dist(前端 + 数据 + 打包的 wasm)** 过去, 数据自带 `/data`(不走 R2)。境内主站。
+
+**前端选源(`db.js configure()`,App.svelte onMount 最先调)** —— 海外默认 R2,境内切 CN 镜像:
+- **`GLOBAL` = 海外默认**:`cnMirror && VITE_DATA_BASE` ⇒ R2(`peer-as-data.opentrace.app`);否则(dn42/本地未注入)⇒ 同源。getData 一致回退目标也是它。
+1. `location.hostname === cn.peer.as`(直连 CN 机器)⇒ **同源 `/data`**(本机即镜像, 不走 R2)。edge=cn。
+2. 否则探同源 `GET /cdn-cgi/trace`(CF 才有):
+   - **trace 404**(不在 CF:GeoDNS 把 peer.as 解到 CN 机器, 或本地 serve)⇒ **同源 `/data`**(本机即正确源)。edge=cn。
+   - **`loc=CN`**(在 CF Pages 且境内, GeoDNS 没生效拿到 CF IP)⇒ 健康探测 `cn.peer.as/data/meta.json`,
+     通了把数据切到 `cn.peer.as`(**带回退**:不通保持 GLOBAL=R2)。edge=cn。
+   - **海外 CF(loc≠CN)/ 网络错误** ⇒ **GLOBAL = R2(`peer-as-data.opentrace.app`)**。edge=cf。
+   覆盖:`VITE_CN_BASE`(默认 `https://cn.peer.as`)、`VITE_DATA_BASE`(R2 基址, 默认随 .env)。
    - 注:GeoDNS 把 peer.as 解到 CN 机器时,hostname 仍是 peer.as ⇒ 走分支 2 的"否则"= 同源(=CN 机器, 数据快)。
    - **wasm/worker 随构建打包(`/assets/*`,见下)**:CN VPS/本地同源托管完整 wasm ⇒ 国内零跨境;
      数据切 `cn.peer.as` 时 `wasmSrcs()` 让 wasm 优先走 CN 镜像同 hash 资产。**唯一例外**:CF Pages 单文件 ≤25MiB
@@ -392,15 +403,15 @@ origin-ASN 经 `pathsearch_origin` 索引 ~1/N 分片、**纯 AS_PATH 无 origin
   **前置(切 NS 前必须)**:CN 机器 Caddy 要能服务 `peer.as` 这个 Host **且有 peer.as 的 TLS 证书**——LE HTTP-01 会失败
   (海外验证者解析 peer.as→CF),需 **DNS-01**(或把 CF 的证书同步过去)。否则境内用户被 GeoDNS 引到 CN 机器时 TLS 握手失败。
 
-**数据版本/缓存**:`meta.version` 仍驱动 `?v=` 失效(同源/CN 都生效)。Pages 侧 `web/public/_headers` 管缓存;
-CN 侧 Caddy 管缓存(见下「中国优化」)。**数据变更:export → rsync CN + pages deploy**(daily-refresh 自动)。
+**数据版本/缓存**:`meta.version` 仍驱动 `?v=` 失效(R2/同源/CN 都生效)。R2 侧靠对象 `Cache-Control` + 自定义域名边缘缓存;
+前端 `web/public/_headers` 管(已不含数据);CN 侧 Caddy 管(见下「中国优化」)。**数据变更:export → r2-sync(R2) + rsync CN + pages deploy(前端)**(daily-refresh 自动)。
 
 ### 中国优化（cn.peer.as）
 
 **问题**：CF Pages 在中国大陆慢(anycast 跨境被限速/丢包，RTT ~450ms)。**方案**：一台中国优化线路的
 VPS(DMIT LAX，`cn.peer.as`)用 **Caddy** 托管**与 peer.as 完全一致的整站(前端 + 数据 + 自托管 DuckDB-WASM)**。
-分流见上「数据分发：同源 + CN 整站镜像」(`db.js configure()`)：直连 cn.peer.as / GeoDNS 把 peer.as 解到本机 ⇒ 同源;
-GeoDNS 没生效拿到 CF IP 且 `loc=CN` ⇒ 切 cn.peer.as(带健康探测 + 自动回退)。**已弃用 R2,数据全部同源**。
+分流见上「数据分发：R2 海外数据宿主 + CN 整站镜像」(`db.js configure()`)：直连 cn.peer.as / GeoDNS 把 peer.as 解到本机 ⇒ 同源;
+GeoDNS 没生效拿到 CF IP 且 `loc=CN` ⇒ 切 cn.peer.as(带健康探测 + 自动回退)。**海外则走 R2(peer-as-data.opentrace.app);CN 镜像数据自带 /data,不走 R2**。
 
 **DuckDB-WASM vendored 打包(JS API/worker 零外部依赖;wasm 仅 CF 节点回退 CDN)**：`@duckdb/duckdb-wasm`
 (版本钉 `DUCKDB_VER`)是 npm 依赖。`db.js` 顶部用 Vite **`?url`** 引入 4 个资产(`duckdb-{mvp,eh}.wasm` +
@@ -483,7 +494,7 @@ parquet`)后该 SET 不再触发任何 autoload。**别把会触发扩展 autolo
 
 `scripts/daily-refresh.sh` 是 **fcron 的薄封装**（脚本名沿用 daily 是历史遗留，**实为每 8h 一次**）：只管日志文件 +
 45 份轮转，实际 `exec scripts/deploy.sh --data`（= 清缓存 → `ingest --reset` v4+v6 → `export-parquet` → **npm build** →
-部署 CF+CN）。**部署逻辑只在 deploy.sh 一处**，cron 与手动结果一致。**已弃用 R2**（数据全部同源，见「中国优化」）。
+部署 R2(数据)+CF(前端)+CN(镜像)）。**部署逻辑只在 deploy.sh 一处**，cron 与手动结果一致。**海外数据走 R2(peer-as-data.opentrace.app)，CN 镜像同源**（见「数据分发」/「中国优化」）。
 - **频率 = 每 8 小时**（本地 Asia/Shanghai `00:40 / 08:40 / 16:40`，条目 `40 0,8,16 * * *`）。这对齐
   **RIPE RIS bview 的 8h 发布节奏（UTC 00/08/16）+ ~40min 发布延迟**——bview 是数据源，跑更勤也不会更新（要更实时得改吃
   RIS update/RIS Live 增量流，是另一套有状态架构）。单轮 **~22min**(ingest∥下载、CN∥CF 并行 + RADB NRTM 增量后；
