@@ -30,9 +30,8 @@
         <span class="en">Mainland-China visitors are served from a China-optimized server kindly sponsored by
         <a href="https://www.dmit.io" target="_blank" rel="noopener noreferrer">DMIT</a>; elsewhere via Cloudflare.</span></p>
 
-      <p class="disc"><b>免责 / Disclaimer</b>：仅是 rrc00 各 peer 的去程视角；父子段基于已采集前缀、可能不全；城市级精度取决于地理库。
-        公开近似快照，仅供 BGP 研究 / 学习，<b>不作运营决策依据</b>。
-        <span class="en">Outbound view of rrc00's peers; coverage may be partial. Approximate public snapshot — research/education only, not authoritative.</span></p>
+      <p class="disc"><b>免责 / Disclaimer</b>：仅供研究学习用途，不为数据准确性负责。
+        <span class="en">For research and educational use only; no guarantee of data accuracy.</span></p>
       <p class="egg">✨ 试试点击 10 次首页 logo。<span class="en">Try tapping the homepage logo 10 times.</span></p>
     </div>
   </div>
