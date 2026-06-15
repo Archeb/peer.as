@@ -32,14 +32,14 @@
 /* ── "Blue Archive" 主题 ────────────────────────────────────────────────
  * 明亮、未来感、学院风的 sci-fi OS 界面。配色逻辑:
  *  基底白  纯白 + 极浅冷灰 → 大面积背景 / 面板内衬 / 激活按钮的(浅色)文字
- *  主调蓝  高饱和天空蓝 #02D3FB → 主要交互 / 核心状态 / 主导航高亮
+ *  主调蓝  #1289F9 → 主要交互 / 核心状态 / 主导航高亮
  *  辅助粉  柔和樱花/霓虹粉 #FF6FAE → 次级操作 / 通知 / 蓝粉双子切换态
  *  深色文本 深午夜蓝 #0B2538(绝不用纯黑) → 纯白/粉/蓝背景上都保持高清晰度
  * 全主题圆角统一 2px。token 为底, 结构层在下方 [data-theme=ba] 段单独叠加。 */
 :root[data-theme=ba] { color-scheme: light;
   --bg: #ffffff; --panel: #ffffff; --alt: #eef2f6; --line: #c8d9ea; --line2: #dce8f4;
   --fg: #0b2538; --muted: #5a7187;
-  --accent: #02d3fb; --accent-h: #0098cf; --accent-fg: #ffffff; --accent-dim: rgba(2, 211, 251, .14);
+  --accent: #1289f9; --accent-h: #0b6fd6; --accent-fg: #ffffff; --accent-dim: rgba(18, 137, 249, .14);
   --accent2: #ff6fae; --accent2-h: #ff4f9c; --accent2-fg: #ffffff; --accent2-dim: rgba(255, 111, 174, .16);
   --signal: #f5a623; --link: #0093c4; --code: #0e7490; --inbg: #ffffff;
   --rowhover: #e6f7fc; --hit: rgba(245, 166, 35, .10); --hit-h: rgba(245, 166, 35, .18);
