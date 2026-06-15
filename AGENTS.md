@@ -85,26 +85,25 @@
 1. dev worktree 改完 → `git add` **只加改的源文件**（**绝不 `git add -A`**：`public/data`/`duckdb-ext`/`.venv` 是本地 symlink，不该提交）→ commit。
 2. `git fetch origin` → 不能 ff（origin/main 被 dn42 推进、分叉）则 `git rebase origin/main`（可能撞 `AGENTS.md`/`db.js`）。
 3. `git push origin dev:main`。**GitOps 唯一真源 = `origin/main`；不 push 到 main，线上 ≤8h 被 cron 回滚。**
-4. **从主 checkout** `cd /home/aosc/test-ip-collect && scripts/deploy.sh`：只动前端→无 flag；改了数据/全重推→`--data`。脚本自己 GitOps ff、`npm build`、数据闸校验、推 **R2(数据,仅 --data) + CF(前端) + CN(镜像)**、末尾核入口一致 + R2 可达。
+4. **从主 checkout** `cd /home/aosc/test-ip-collect && scripts/deploy.sh`：只动前端→无 flag；改了数据/全重推→`--data`。脚本自己 GitOps ff、`npm build`、数据闸校验、推 **CF(前端+数据) + CN(镜像)** 两端、末尾核两端入口一致。
    - **绝不在缺 `.env` 的 worktree 跑 deploy.sh**（CN 凭据只在 `.env`，缺则 CN 静默跳过→两端不一致）；**绝不手敲 wrangler/rsync/手动 build**。
 5. 成功 = 日志末尾 `完成 ✅`。dn42 由其自己的 10min cron 自动同步，无需手动。
 
 > 纯文档/记忆类改动（如本文件）：走 1–3 即可，**不必跑 deploy.sh**（不进 dist、不影响站点）。
 > `scripts/deploy.sh` 是**唯一部署入口**（cron / 手动 / 开发全走它，结果一致）。flag：`--data` / `--no-build` / `--cf-only` / `--cn-only` / `--help`。
 
-### 数据分发：R2 海外 + CN 整站镜像
+### 数据分发：同源 Pages + CN 整站镜像
 
-数据宿主**按用户位置三选一**（`web/src/lib/db.js` 的 `configure()` 运行时选，App.svelte onMount 最先调）：
+**数据随前端一起部署到 CF Pages、海外同源 `/data`**（Pages 资产分发到全球边缘、就近返回、无回源）。数据宿主**按用户位置在 `web/src/lib/db.js` 的 `configure()` 运行时选**：
 
-- **海外 = R2**（`peer-as-data.opentrace.app`，桶 `peer-as-data`）。**动机**：CF Pages 单文件 ≤25MiB（最大 parquet 分片已近 25MiB）、单部署 ≤2万文件，放不下全表 → 海外数据独立 R2 桶托管，前端 `VITE_DATA_BASE` 构建期注入。R2 egress 免费，绑自定义域名 + **Cache 规则（Cache Everything）** 后边缘命中即不计 Class B。**CORS=`*`**（公共数据，已配）。
-- **境内 = `cn.peer.as`**（CN 优化 VPS，见下「中国优化」），数据自带 `/data`，不走 R2。
-- **同源 `/data`** = 本地 serve / GeoDNS 把 peer.as 解到 CN 机器 / dn42（未注入 `VITE_DATA_BASE`）。
+- **海外 = 同源 `/data`**（CF Pages）。
+- **境内 = `cn.peer.as`**（CN 优化 VPS 整站镜像，见下「中国优化」），数据自带 `/data`。
+- **GeoDNS 把 peer.as 解到 CN 机器 / 本地 serve** = 同源（本机即正确源）。
 
-`configure()` 逻辑：直连 cn.peer.as 或 `/cdn-cgi/trace` 404（GeoDNS→CN 机器/本地）⇒ 同源；CF 上 `loc=CN` ⇒ 健康探测后切 cn.peer.as（带回退）；海外 CF ⇒ R2。`GLOBAL`（海外默认 = R2，`cnMirror && VITE_DATA_BASE` 才启用，故 dn42 绝不误取 R2）也是 `getData()` 的一致回退目标。**wasm/parquet 扩展不迁 R2**（仍同源；CF 节点大 wasm 回退 CDN）。
+`configure()` 逻辑：直连 cn.peer.as 或 `/cdn-cgi/trace` 404（GeoDNS→CN 机器/本地）⇒ 同源 edge=cn；CF 上 `loc=CN`（境内但 GeoDNS 没生效）⇒ 健康探测后切 cn.peer.as（带回退同源）；其余（海外 CF）⇒ 同源 edge=cf。wasm/worker 随构建打包（worker/JS API 始终同源；CF 节点大 wasm 回退 CDN）。
+**数据版本/缓存**：`meta.version` 驱动 `?v=` 失效（所有 parquet/asnames URL 带上，故可长缓存，`web/public/_headers` 管）；`meta.json` 自身 no-cache。
 
-部署侧（`deploy.sh`）：`--data` 时并行 `scripts/r2-sync.sh dist/data peer-as-data`（并行 wrangler put、排除 dotfile、**meta.json 最后传**原子切版本、任一分片失败=中止）；`deploy_cf` 从 Pages 暂存株删除 `dist/data`（只留前端 + duckdb-ext）；纯前端部署（无 `--data`）不碰 R2。
-**数据版本/缓存**：`meta.version` 驱动 `?v=` 失效（所有 parquet/asnames URL 带上，故可长缓存）；`meta.json` 自身 no-cache。
-**首次启用某 R2 域名前**：CF 控制台给桶绑自定义域名 + 加 Cache 规则（否则 `.parquet`/`.json` 默认不被边缘缓存，cf-cache=DYNAMIC，每请求计 Class B、不就近加速）。
+> **曾短暂试过 R2（海外数据独立桶 `peer-as-data`），2026-06-15 当天回退**：CF Pages 是边缘分发，R2 自定义域名是单源拉取式缓存，**叠加 8h 数据刷新 + `?v=` 整批失效 + 低单点流量 → 每个 POP 基本都冷回源**，比 Pages 慢很多；而迁 R2 的唯一理由（Pages 25MiB/2万文件上限）当前未撞线（最大分片 ~19.5MB、943 文件）。**结论：留在 Pages**；将来某分片逼近 25MiB 时靠**切更细分片**（export 的 `*_FILE_SIZE` 旋钮）继续留 Pages，而非搬 R2。
 
 ### 中国优化（cn.peer.as）
 
@@ -113,7 +112,7 @@ DuckDB-WASM、Cache Storage 大 wasm 缓存、parquet 扩展自托管、全 GET 
 
 ### cron 自动刷新（每 8h）
 
-`scripts/daily-refresh.sh`（fcron 薄封装）= `exec scripts/deploy.sh --data`（清缓存 → ingest → export → build → 部署 R2+CF+CN）。频率每 8h（`40 0,8,16 * * *`，对齐 RIPE RIS bview 发布节奏）。`flock` 防并发。改 cron 用 `fcrontab -` stdin 灌入（直接 `fcrontab 文件` 在无 tty 下会段错误）。wrangler OAuth 过期会让 CF 步失败 → 重 `wrangler login`。
+`scripts/daily-refresh.sh`（fcron 薄封装）= `exec scripts/deploy.sh --data`（清缓存 → ingest → export → build → 部署 CF+CN）。频率每 8h（`40 0,8,16 * * *`，对齐 RIPE RIS bview 发布节奏）。`flock` 防并发。改 cron 用 `fcrontab -` stdin 灌入（直接 `fcrontab 文件` 在无 tty 下会段错误）。wrangler OAuth 过期会让 CF 步失败 → 重 `wrangler login`。
 
 ## 不变量 / 常见坑（改动前必读）
 
