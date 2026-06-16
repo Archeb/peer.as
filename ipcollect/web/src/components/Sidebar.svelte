@@ -4,15 +4,12 @@
   import { t } from '../lib/i18n.js'
   import { cycleTheme, toggleLang } from '../lib/ui.js'
   import { setView, goHome, openProbe, openTrace } from '../lib/queries.js'
-  import { genAgo, genUtc } from '../lib/clock.svelte.js'
-  import { iPrefix, iPath, iGlobal, iClock, iTheme, iLang, iAbout, iRepo, iIssue, iChangelog, iNodes, iWhois, iProbe, iClose, iSatellite, iLink } from '../lib/icons.js'
+  import { iTheme, iLang, iAbout, iRepo, iIssue, iChangelog, iNodes, iWhois, iProbe, iClose, iSatellite, iLink, iChevD, iChevR } from '../lib/icons.js'
   import { brand, features } from '../lib/site.js'
   import logoBa from '../assets/peeras-ba.png'
 
-  let counts = $derived(S.meta?.counts || {})
-  let nCountry = $derived((S.meta?.countries || []).length)
-  let fmt = n => (n ?? '—') === '—' ? '—' : Number(n).toLocaleString()
   let themeLabel = $derived({ auto: 'AUTO', light: 'LIGHT', dark: 'DARK', ba: 'BA' }[S.theme] || 'AUTO')
+  let friendsOpen = $state(false)   // 友情链接默认折叠, 点标题展开
 </script>
 
 {#if S.side}<div class="scrim" onclick={() => (S.side = false)} role="presentation"></div>{/if}
@@ -53,29 +50,23 @@
     </nav>
   {/if}
 
-  <section class="sec">
-    <h3>{t('overview')}</h3>
-    <dl class="stats">
-      <div><dt><Fa icon={iPrefix} /> {t('t_prefix4')}</dt><dd>{fmt(counts.prefixes)}</dd></div>
-      <div><dt><Fa icon={iPrefix} /> {t('t_prefix6')}</dt><dd>{fmt(counts.prefixes_v6)}</dd></div>
-      <div><dt><Fa icon={iPath} /> {t('t_paths')}</dt><dd>{fmt((counts.paths || 0) + (counts.paths_v6 || 0))}</dd></div>
-      <div><dt><Fa icon={iGlobal} /> {t('t_country')}</dt><dd>{nCountry || '—'}</dd></div>
-      <div><dt><Fa icon={iClock} /> {t('t_gen')}</dt><dd class="gen" title={genUtc(S.meta?.generated_ts)}>{genAgo(S.meta?.generated_ts)}</dd></div>
-    </dl>
-  </section>
-
   <div class="foot">
     <nav class="links friendlinks" aria-label={t('friends')}>
-      <span class="friendhd">{t('friends')}</span>
-      <a class="lnk" href="https://www.nxtrace.org/" target="_blank" rel="noopener noreferrer">
-        <Fa icon={iLink} /> NextTrace
-      </a>
-      <a class="lnk" href="https://opentrace.app/" target="_blank" rel="noopener noreferrer">
-        <Fa icon={iLink} /> OpenTrace
-      </a>
-      <a class="lnk" href="https://nt.u1.pw/" target="_blank" rel="noopener noreferrer">
-        <Fa icon={iLink} /> Network Test
-      </a>
+      <button class="friendhd" onclick={() => (friendsOpen = !friendsOpen)}
+              aria-expanded={friendsOpen}>
+        <Fa icon={friendsOpen ? iChevD : iChevR} /> {t('friends')}
+      </button>
+      {#if friendsOpen}
+        <a class="lnk" href="https://www.nxtrace.org/" target="_blank" rel="noopener noreferrer">
+          <Fa icon={iLink} /> NextTrace
+        </a>
+        <a class="lnk" href="https://opentrace.app/" target="_blank" rel="noopener noreferrer">
+          <Fa icon={iLink} /> OpenTrace
+        </a>
+        <a class="lnk" href="https://nt.u1.pw/" target="_blank" rel="noopener noreferrer">
+          <Fa icon={iLink} /> Network Test
+        </a>
+      {/if}
     </nav>
     <nav class="links">
       <a class="lnk" href="https://github.com/Archeb/peer.as" target="_blank" rel="noopener noreferrer">
@@ -140,8 +131,6 @@
     margin-right: 9px; box-shadow: 0 0 10px var(--accent); animation: pulse 2.4s ease-in-out infinite;
   }
   @keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: .35 } }
-  .brand .tag { font-size: 10.5px; color: var(--muted); margin-top: 7px; line-height: 1.4; }
-
   /* 顶层视图导航(路由分析 / WHOIS)。左侧 accent 竖条标记当前视图。 */
   .vnav { display: flex; flex-direction: column; gap: 3px; margin-top: -6px; }
   .vitem {
@@ -168,20 +157,6 @@
   }
   :global(:root[data-theme='light']) .vitem.on::before { box-shadow: 0 0 4px color-mix(in srgb, var(--accent) 38%, transparent); }
 
-  .sec h3 {
-    margin: 0 0 9px; font: 700 10px/1 var(--sans); letter-spacing: .14em;
-    text-transform: uppercase; color: var(--muted);
-  }
-  .stats { margin: 0; }
-  .stats > div {
-    display: flex; justify-content: space-between; align-items: baseline;
-    padding: 5px 0; border-bottom: 1px solid var(--line2); font-size: 12px;
-  }
-  .stats dt { color: var(--muted); display: inline-flex; align-items: center; gap: 7px; }
-  .stats dt :global(svg) { color: var(--muted); width: 11px; }
-  .stats dd { margin: 0; color: var(--fg); font: 600 12.5px/1 var(--mono); }
-  .stats dd.gen { color: var(--muted); }
-
   .foot { margin-top: auto; display: flex; flex-direction: column; gap: 10px; padding-top: 14px; }
   .links { display: flex; flex-direction: column; gap: 3px; border-top: 1px solid var(--line2); padding-top: 10px; }
   .lnk {
@@ -193,7 +168,14 @@
   .lnkbtn { background: transparent; border: 0; cursor: pointer; text-align: left; font-family: var(--sans); }
   /* 友情链接: 置于 links 最上方, 自身不画分割线(顶部) */
   .friendlinks { border-top: 0; padding-top: 0; }
-  .friendhd { font: 700 9.5px var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); opacity: .7; padding: 0 2px 2px; }
+  .friendhd {
+    display: flex; align-items: center; gap: 6px; width: 100%;
+    background: transparent; border: 0; cursor: pointer; text-align: left;
+    font: 700 9.5px var(--sans); letter-spacing: .08em; text-transform: uppercase;
+    color: var(--muted); opacity: .7; padding: 2px 2px; transition: opacity .12s, color .12s;
+  }
+  .friendhd:hover { opacity: 1; color: var(--fg); }
+  .friendhd :global(svg) { width: 8px; }
   .ctl { display: flex; gap: 6px; }
   .ctl .ghost {
     flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 6px;

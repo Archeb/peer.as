@@ -187,7 +187,7 @@ export function createTraceGlobe(canvas, opts = {}) {
     ctx.setTransform(DPR, 0, 0, DPR, 0, 0)
     // 地球占满整个视图、球心在 3D 空间里推到偏右(~57% 宽处); 半径取到能盖住最远的视口角 ——
     // 这样默认看不到任何圆盘边缘, 也就不存在「地球底色 ≠ 页面底色」的割裂(浅色尤甚)。缩小(滚轮)后才露球缘。
-    baseCx = W * 0.57; baseCy = H * 0.5
+    baseCx = W * 0.57; baseCy = H * (W <= 820 ? 0.42 : 0.5)
     panX = clamp(panX, -W * 0.55, W * 0.55); panY = clamp(panY, -H * 0.55, H * 0.55)
     cx = baseCx + panX; cy = baseCy + panY
     const farX = Math.max(baseCx, W - baseCx), farY = Math.max(baseCy, H - baseCy)
@@ -340,6 +340,97 @@ export function createTraceGlobe(canvas, opts = {}) {
   const packets = []
   let pktAcc = 0
   let targetKey = null         // 目标稳定键(仅目标真的换了才重新缓飞相机, 不被逐跳更新打断)
+
+  function routePoints() {
+    const pts = []
+    const addRad = (lat, lon) => {
+      if (!Number.isFinite(lat) || !Number.isFinite(lon)) return
+      if (Math.abs(lat) < 1e-9 && Math.abs(lon) < 1e-9) return
+      pts.push({ lat, lon: wrapPi(lon) })
+    }
+    const addDeg = (lat, lon) => {
+      lat = Number(lat); lon = Number(lon)
+      if (!Number.isFinite(lat) || !Number.isFinite(lon)) return
+      if (lat === 0 && lon === 0) return
+      addRad(lat * D2R, lon * D2R)
+    }
+    if (target) addRad(target.la, target.lo)
+    for (const p of probes) {
+      addDeg(p.lat, p.lon)
+      for (const h of p.hops || []) addRad(h.la, h.lo)
+    }
+    return pts
+  }
+  function fitLon(lons) {
+    if (!lons.length) return { center: 0, span: .18 }
+    const xs = lons.map(wrapPi).sort((a, b) => a - b)
+    if (xs.length === 1) return { center: xs[0], span: .18 }
+    let gap = -1, gi = 0
+    for (let i = 0; i < xs.length; i++) {
+      const a = xs[i], b = i === xs.length - 1 ? xs[0] + TAU : xs[i + 1]
+      const g = b - a
+      if (g > gap) { gap = g; gi = i }
+    }
+    const start = xs[(gi + 1) % xs.length]
+    const span = Math.max(.18, TAU - gap)
+    return { center: wrapPi(start + span / 2), span, start, end }
+  }
+  function setFitFrame(zoomTo, centerX, centerY, minZoom) {
+    zoom = clamp(zoomTo, minZoom, 5.5)
+    panX = clamp(centerX - baseCx, -W * 0.55, W * 0.55)
+    panY = clamp(centerY - baseCy, -H * 0.55, H * 0.55)
+    cx = baseCx + panX; cy = baseCy + panY; R = Rbase * zoom
+    homing = false
+  }
+  // 缩放/定位到当前路由全览。移动端把可视区域按底部 panel 遮挡折半处理。
+  function fitRoute() {
+    const pts = routePoints()
+    if (!pts.length || !W || !H || !Rbase) return false
+    const mobile = W <= 820
+    const pad = mobile ? 36 : 72
+    const viewBottom = mobile ? H * .52 : H
+    const fitW = Math.max(120, W - pad * 2)
+    const fitH = Math.max(120, viewBottom - pad * 2)
+    const centerX = W * .5
+    const centerY = mobile ? viewBottom * .47 : H * .5
+
+    if (mode2d) {
+      const lr = fitLon(pts.map(p => p.lon))
+      const ys = pts.map(p => mercYof(p.lat))
+      const minY = Math.min(...ys), maxY = Math.max(...ys)
+      const ySpan = Math.max(.18, maxY - minY)
+      const z = Math.min(fitW / (lr.span * Rbase), fitH / (ySpan * Rbase)) * .92
+      lam0 = lr.center
+      Y0 = clamp((minY + maxY) / 2, -MERC_MAX, MERC_MAX)
+      cam2.on = false
+      setFitFrame(z, centerX, centerY, .16)
+      return true
+    }
+
+    let x = 0, y = 0, z = 0
+    for (const p of pts) {
+      const cl = Math.cos(p.lat)
+      x += cl * Math.cos(p.lon); y += cl * Math.sin(p.lon); z += Math.sin(p.lat)
+    }
+    let m = Math.hypot(x, y, z), lat = 0, lon = 0
+    if (m > 1e-6) { lat = Math.asin(clamp(z / m, -1, 1)); lon = Math.atan2(y, x) }
+    else {
+      const lr = fitLon(pts.map(p => p.lon))
+      const ys = pts.map(p => mercYof(p.lat))
+      lon = lr.center; lat = invMercY((Math.min(...ys) + Math.max(...ys)) / 2)
+    }
+    let maxAng = .12
+    for (const p of pts) {
+      const d = Math.sin(lat) * Math.sin(p.lat) + Math.cos(lat) * Math.cos(p.lat) * Math.cos(wrapPi(p.lon - lon))
+      maxAng = Math.max(maxAng, Math.acos(clamp(d, -1, 1)))
+    }
+    const projected = Math.sin(Math.min(maxAng, Math.PI / 2))
+    const fitR = Math.max(80, Math.min(W * .5 - pad, viewBottom * .5 - pad))
+    const zoomTo = fitR / (Rbase * Math.max(.08, projected) * 1.18)
+    setFitFrame(zoomTo, centerX, centerY, .5)
+    flyTo(lon / D2R, lat / D2R)
+    return true
+  }
 
   function setData(m) {
     model = m || { target: null, probes: [] }
@@ -1052,7 +1143,7 @@ export function createTraceGlobe(canvas, opts = {}) {
   raf = requestAnimationFrame(frame)
 
   return {
-    setData, setLocations, setHold, setMode, focus, setHidden, setHideLoc, setLockNorth, recenter, reset, setHome,
+    setData, setLocations, setHold, setMode, focus, setHidden, setHideLoc, setLockNorth, recenter, reset, setHome, fitRoute,
     destroy() {
       cancelAnimationFrame(raf); ro.disconnect()
       window.removeEventListener('mousemove', onMove); surf.removeEventListener('mouseleave', onLeave); surf.removeEventListener('mousedown', onDown)

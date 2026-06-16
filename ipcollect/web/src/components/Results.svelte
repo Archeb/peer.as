@@ -8,6 +8,7 @@
   import AsnTag from './AsnTag.svelte'
   import AsPath from './AsPath.svelte'
   import OriginStatus from './OriginStatus.svelte'
+  import OverviewStats from './OverviewStats.svelte'
 
   // DMIT 赞助 logo(本地 public/dmit.svg)。绝对化以适配任意部署根(同 db.js 的做法)。
   const DMIT = new URL('./dmit.svg', document.baseURI).href
@@ -74,10 +75,7 @@
   </div>
 {:else}
   {#if S.mode === 'prompt'}
-    <div class="prompt">
-      <div class="prompt-icon"><Fa icon={iSignal} /></div>
-      <p>{@html t('pick_country')}</p>
-    </div>
+    <OverviewStats prompt />
   {:else}
     <div class="empty">{t('no_results')}</div>
   {/if}
@@ -128,14 +126,6 @@
   .segs { display: flex; flex-wrap: wrap; gap: 4px 12px; }
   .segpill { font: 11.5px var(--mono); color: var(--code); }
 
-  .prompt { padding: 60px 20px; text-align: center; color: var(--muted); max-width: 520px; margin: 0 auto; }
-  .prompt-icon {
-    font-size: 30px; color: var(--accent); opacity: .5; margin-bottom: 16px;
-    animation: float 3s ease-in-out infinite;
-  }
-  @keyframes float { 0%,100% { transform: translateY(0) } 50% { transform: translateY(-6px) } }
-  .prompt p { font-size: 13.5px; line-height: 1.8; }
-  .prompt :global(b) { color: var(--fg); font-weight: 600; }
   .empty { color: var(--muted); padding: 40px 6px; font-size: 13px; text-align: center; }
   /* 中国优化服务器赞助提示: 文字用与 prompt 一致的 muted 色; margin-top:auto 贴到内容区底部,
      与侧栏底部控制栏(.foot)高度对齐 */

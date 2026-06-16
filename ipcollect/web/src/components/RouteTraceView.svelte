@@ -38,6 +38,8 @@
   let map2d = $state(_set.map2d ?? (typeof window !== 'undefined' && window.innerWidth <= 820))   // 2D(墨卡托)/3D 切换(右下角); 移动端默认 2D, 桌面默认 3D(无存档时)
   let lockNorth = $state(_set.lockNorth ?? true)         // 锁定正北(北极朝上, 拖动不产生 roll); 默认开, 右下角可解除
   let globeCtrl = null                                    // TraceGlobe 引擎句柄(复位按钮用)
+  let fitTimer = 0
+  let singleProbeFitDone = false
   let famLabel = $derived(mtr.family === '4' ? 'IPv4' : mtr.family === '6' ? 'IPv6' : 'AUTO')
   // 各类型可用项(对齐 globalping spec): ping 协议仅 ICMP/TCP; trace/mtr 加 UDP。
   // port 仅在该协议会用到端口时可填(ping/trace 仅 TCP; mtr 为 TCP/UDP)。packets 仅 ping/mtr。无尽仅 ping。
@@ -191,6 +193,18 @@
   let inputEl
   let ctl = null                        // 当前 streamTrace 控制器
   let ranFor = ''                       // 最近发起的 target(防 effect 重复触发)
+  function scheduleRouteFit(attempt = 0) {
+    clearTimeout(fitTimer)
+    fitTimer = setTimeout(() => {
+      fitTimer = 0
+      const ok = globeCtrl?.fitRoute?.()
+      if (!ok && attempt < 5) scheduleRouteFit(attempt + 1)
+    }, 80)
+  }
+  function resetRouteFit() {
+    singleProbeFitDone = false
+    clearTimeout(fitTimer); fitTimer = 0
+  }
 
   // ── 历史记录(localStorage)+ 输入框下拉自动匹配 ──
   const HKEY = 'ipc-trace-history'
@@ -279,7 +293,7 @@
       allLocations = locs; locLoading = false
       if (!picks.length) applyDefaultSelection(locs)
     }).catch(e => { locLoading = false; locError = e?.message || 'load failed' })
-    return () => { ctl?.cancel(); window.removeEventListener('pointermove', onGesture); window.removeEventListener('pointerup', endGesture) }
+    return () => { ctl?.cancel(); clearTimeout(fitTimer); window.removeEventListener('pointermove', onGesture); window.removeEventListener('pointerup', endGesture) }
   })
 
   $effect(() => {
@@ -290,6 +304,7 @@
 
   function resetRemoteTrace() {
     ctl?.cancel(); ctl = null; ntraceSeq++
+    resetRouteFit()
     running = false
     currentNTraceId = ''; pendingNTraceId = ''
     loadedNTraceId = ''; ntraceHtmlUrl = ''; ntraceGenerated = ''; remoteLoading = false
@@ -304,6 +319,7 @@
     const seq = ++ntraceSeq
     ctl = { cancel() { ac.abort(); ntraceSeq++ } }
     pendingNTraceId = id
+    resetRouteFit()
     running = true; remoteLoading = true; errMsg = ''; focusId = null
     openRows = new Set(); rawView = new Set(); hiddenProbes = new Set()
     trace = { target: null, probes: [] }
@@ -315,8 +331,12 @@
       ntraceGenerated = model.generatedAt || ''
       box = model.target?.label || model.target?.ip || ''
       trace = model
-      openRows = new Set((model.probes || []).map(p => p.id))
+      // 桌面默认展开所有监测点逐跳; 移动端(底部面板)默认收起, 免一加载就占满半屏。
+      openRows = (typeof window !== 'undefined' && window.innerWidth <= 820)
+        ? new Set()
+        : new Set((model.probes || []).map(p => p.id))
       running = false; remoteLoading = false; ctl = null
+      scheduleRouteFit()
     }).catch(e => {
       if (seq !== ntraceSeq || e?.name === 'AbortError') return
       currentNTraceId = ''; pendingNTraceId = ''
@@ -338,6 +358,7 @@
     if (!totalProbes) { errMsg = t('rt_pick_probes'); probesOpen = true; return }
     setGeoSource(geoSource)   // 发起前确保 GeoIP 源已生效(防 HMR/时序导致未应用)
     box = target; ranFor = target; addHistory(target)
+    resetRouteFit()
     ctl?.cancel(); currentNTraceId = ''; pendingNTraceId = ''; loadedNTraceId = ''; ntraceHtmlUrl = ''; ntraceGenerated = ''; remoteLoading = false
     if (S.trace?.ntraceId) { S.trace = { target: '' }; clearNTraceUrl() }
     dropOpen = false; running = true; focusId = null; errMsg = ''
@@ -375,6 +396,7 @@
         p.status = 'done'
         p.rounds = (info?.rounds || []).slice(-40)           // 到目标的真实逐包 RTT 样本(光谱小点)
         trace = { target: trace.target, type: trace.type, probes: [...trace.probes] }
+        if (trace.probes.length === 1 && !singleProbeFitDone) { singleProbeFitDone = true; scheduleRouteFit() }
       },
       onUpdate(id, hops, rounds) {                           // 无尽 ping 的后续轮: 刷新逐跳 + 累加该轮样本
         const p = trace.probes.find(x => x.id === id); if (!p) return
@@ -397,6 +419,7 @@
   // 清除地球 + panel 上的全部结果(保留输入/选点, 可直接重跑)
   function clearResults() {
     ctl?.cancel(); running = false
+    resetRouteFit()
     trace = { target: null, probes: [] }
     focusId = null; openRows = new Set(); rawView = new Set(); hiddenProbes = new Set(); ranFor = ''; S.trace = { target: '' }; errMsg = ''
     currentNTraceId = ''; pendingNTraceId = ''
@@ -406,6 +429,8 @@
   function submit(e) { e?.preventDefault(); launch() }
   function clearBox() { box = ''; inputEl?.focus() }
   function toggleRow(id) { const s = new Set(openRows); s.has(id) ? s.delete(id) : s.add(id); openRows = s }
+  // 一键收起/展开全部监测点(移动端 rhead 的下拉箭头): 有展开的就全收, 全收着就全展。
+  function toggleAllRows() { openRows = openRows.size ? new Set() : new Set((trace.probes || []).map(p => p.id)) }
 
   // 逐跳详情里某监测点切到「原始输出」视图(灯箱式两态: 逐跳 / rawOutput)。
   let rawView = $state(new Set())
@@ -623,6 +648,10 @@
                    target="_blank" rel="noopener noreferrer" title={ntraceGenerated || loadedNTraceId}>{t('rt_ntrace_loaded')}</a>
               {/if}
               <span class="rcount">{doneCount}/{trace.probes.length}</span>
+              <!-- 移动端: 一键收起/展开全部逐跳(下拉箭头); 桌面隐藏(默认已全展) -->
+              <button class="rcollapse" onclick={toggleAllRows}
+                      title={openRows.size ? t('rt_collapse_all') : t('rt_expand_all')}
+                      aria-label={openRows.size ? t('rt_collapse_all') : t('rt_expand_all')}><Fa icon={openRows.size ? iChevD : iChevR} /></button>
               <button class="rclear" onclick={clearResults} title={t('rt_clear')} aria-label={t('rt_clear')}><Fa icon={iClear} /></button>
             </div>
             <div class="plist">
@@ -1092,6 +1121,9 @@
   .rsource { flex: 0 0 auto; color: var(--accent); text-decoration: none; font: 600 11px var(--sans); border: 1px solid color-mix(in srgb, var(--accent) 42%, var(--line)); border-radius: 999px; padding: 2px 7px; white-space: nowrap; }
   .rsource:hover { background: var(--accent-dim); }
   .rcount { flex: 0 0 auto; margin-left: auto; }
+  .rcollapse { flex: 0 0 auto; display: none; align-items: center; justify-content: center; width: 22px; height: 22px; padding: 0; background: transparent; border: 0; color: var(--muted); cursor: pointer; transition: color .12s; }
+  .rcollapse:hover { color: var(--accent); }
+  .rcollapse :global(svg) { width: 13px; }
   .rclear { flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; padding: 0; background: transparent; border: 0; color: var(--muted); cursor: pointer; transition: color .12s; }
   .rclear:hover { color: var(--fg); }
   .rclear :global(svg) { width: 11px; }
@@ -1233,12 +1265,17 @@
 
   /* 移动端: 面板锁定在底部、不可拖动/缩放; 反转布局让输入在底、结果向上展开 */
   @media (max-width: 820px) {
+    /* HUD 抬到 menubtn(z11)/projctl(z4) 之上, 让展开的面板能盖住它们(.rtv 是 container 即栈上下文,
+       app 级弹窗在 .rtv 之外故仍在面板之上)。面板留白处 pointer-events:none → 未盖住时菜单钮照常可点。 */
+    .hud { z-index: 20; }
+    .rcollapse { display: inline-flex; }   /* 一键收起/展开全部, 仅移动端 rhead 显示 */
     .panel {
       left: 0 !important; right: 0 !important; top: auto !important; bottom: 0;
       width: auto !important; height: auto !important;
       flex-direction: column-reverse;                 /* 输入在底, 工具/结果向上展开 */
       border-radius: 16px 16px 0 0;                    /* 贴底, 仅上缘圆角 */
-      max-height: calc(100dvh - 12px); cursor: default;
+      max-height: calc(100dvh - 12px); cursor: default; /* 去掉 50dvh 硬限: 默认收起结果故面板自然短, 需要时才长 */
+      overflow-y: auto; overscroll-behavior: contain;   /* 内容超出时面板内滚, 不连带滚页面 */
       padding: 12px 14px calc(14px + env(safe-area-inset-bottom, 0px));
     }
     .panel.dragging { user-select: auto; }
