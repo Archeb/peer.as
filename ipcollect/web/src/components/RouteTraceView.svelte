@@ -10,7 +10,7 @@
   import { t } from '../lib/i18n.js'
   import { loadInsightFor } from '../lib/queries.js'
   import { asnName } from '../lib/bgp.js'
-  import { iPlay, iStop, iClose, iChevD, iChevR, iProbe, iClock, iGear, iInfinity, iSearch, iClear, iPlus, iCity, iCountry, iNet, iLoc, iRecenter, iVisible, iLowvis } from '../lib/icons.js'
+  import { iPlay, iStop, iClose, iChevD, iChevR, iProbe, iClock, iGear, iInfinity, iSearch, iClear, iPlus, iCity, iCountry, iNet, iLoc, iRecenter, iCompass, iVisible, iLowvis } from '../lib/icons.js'
   import { streamTrace } from '../lib/globalping.js'
   import { loadNTraceMap } from '../lib/ntrace-map.js'
   import { loadProbeLocations } from '../lib/trace-probes.js'
@@ -36,6 +36,7 @@
   })
   let geoSource = $state(_set.geoSource ?? 'nexttrace')   // GeoIP 数据源: NextTrace(经 worker, 免 token) / 内置
   let map2d = $state(_set.map2d ?? (typeof window !== 'undefined' && window.innerWidth <= 820))   // 2D(墨卡托)/3D 切换(右下角); 移动端默认 2D, 桌面默认 3D(无存档时)
+  let lockNorth = $state(_set.lockNorth ?? true)         // 锁定正北(北极朝上, 拖动不产生 roll); 默认开, 右下角可解除
   let globeCtrl = null                                    // TraceGlobe 引擎句柄(复位按钮用)
   let famLabel = $derived(mtr.family === '4' ? 'IPv4' : mtr.family === '6' ? 'IPv6' : 'AUTO')
   // 各类型可用项(对齐 globalping spec): ping 协议仅 ICMP/TCP; trace/mtr 加 UDP。
@@ -49,7 +50,7 @@
   // 应用 + 自动保存全部设置(MTR 选项 + GeoIP 源/token)
   $effect(() => { setGeoSource(geoSource) })
   $effect(() => {
-    const data = { type: mtr.type, infinite: mtr.infinite, family: mtr.family, proto: mtr.proto, port: mtr.port, packets: mtr.packets, geoSource, map2d }
+    const data = { type: mtr.type, infinite: mtr.infinite, family: mtr.family, proto: mtr.proto, port: mtr.port, packets: mtr.packets, geoSource, map2d, lockNorth }
     try { localStorage.setItem(SETKEY, JSON.stringify(data)) } catch { /* 隐私模式忽略 */ }
   })
 
@@ -435,11 +436,15 @@
   <!-- 地球(占满视图、偏右); 在球上按下也收起历史下拉(拖地球时不留残影) -->
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div class="globe-stage" class:in={shown} class:booting onpointerdown={() => { dropOpen = false; if (document.activeElement && document.activeElement.blur) document.activeElement.blur() }}>
-    <TraceGlobe model={trace} locations={locInfo} {focusId} hidden={hiddenProbes} hold={!!hoverLoc} mode2d={map2d} onpick={pick} onlochover={onLocHover} onhover={(id) => (focusId = id)} onengine={(c) => (globeCtrl = c)} />
+    <TraceGlobe model={trace} locations={locInfo} {focusId} hidden={hiddenProbes} hideLocations={!!loadedNTraceId} {lockNorth} hold={!!hoverLoc} mode2d={map2d} onpick={pick} onlochover={onLocHover} onhover={(id) => (focusId = id)} onengine={(c) => (globeCtrl = c)} />
   </div>
 
   <!-- 右下角控制: 复位 + 2D/3D 投影切换(粒子形变转场) -->
   <div class="projctl" class:in={shown}>
+    {#if !map2d}
+      <button class="reset" class:on={lockNorth} onclick={() => (lockNorth = !lockNorth)}
+              aria-pressed={lockNorth} title={t(lockNorth ? 'rt_north_unlock' : 'rt_north_lock')} aria-label={t('rt_north_lock')}><Fa icon={iCompass} /></button>
+    {/if}
     <button class="reset" onclick={() => globeCtrl?.reset()} title={t('rt_recenter')} aria-label={t('rt_recenter')}><Fa icon={iRecenter} /></button>
     <div class="projsel" role="group" aria-label="3D / 2D">
       <button class:on={!map2d} onclick={() => (map2d = false)} aria-pressed={!map2d} title={t('rt_proj3d')}>3D</button>
@@ -1210,6 +1215,7 @@
     cursor: pointer; color: var(--muted); transition: background .14s, color .14s;
   }
   .projctl > .reset:hover { color: var(--accent); background: color-mix(in srgb, var(--accent-dim) 70%, var(--panel)); }
+  .projctl > .reset.on { color: var(--accent); background: var(--accent-dim); }
   .projctl > .reset:active { transform: translateY(1px); }
   .projctl > .reset :global(svg) { width: 14px; }
   .projsel button {

@@ -23,7 +23,7 @@ const clamp = (v, a, b) => v < a ? a : v > b ? b : v
 // 加载时的默认朝向(仅初始姿态, 之后可像真实地球仪一样朝任意方向自由拖动 —— 无固定地轴)。
 const INIT_LAT = -22 * D2R   // d3 rotate 的 φ = −中心纬度 → 视野中心落在北纬 ~22°
 const INIT_ROLL = 0          // 不倾斜, 地球站正(北极朝上); 用户可用右键拖动手动 roll 角度
-const LIFT = 1.025          // 弧线/节点略微抬离球面, 不被球体挡住
+const LIFT = 1              // 弧线/节点紧贴球面(2D canvas 画家序: 后画即在上层, 不会被球体挡住)
 const ZOOM0 = 0.82          // 默认缩放(复位回到此)
 
 // ── 2D(墨卡托)与形变 ──
@@ -219,6 +219,7 @@ export function createTraceGlobe(canvas, opts = {}) {
   let q = eulerToQ(0, INIT_LAT, INIT_ROLL)   // 当前朝向(加载默认: 看北纬 ~22°、站正)
   let MV = qMat(q)                           // 本帧旋转矩阵(每帧由 q 重算; projectLL 复用)
   let userMoved = false                      // 用户是否已手动拖动/缩放(true 后不再自动飞到 home)
+  let lockNorth = opts.lockNorth !== false   // 锁定正北(北极朝上): 拖动只转经纬、roll 恒为 0; 默认开
   const cam = { q: null, flying: false, flyT: 0 }   // 缓飞目标朝向(slerp)
 
   // ── 2D/3D 模式 ── mt: 形变进度 0(纯 3D)..1(纯 2D), 朝 mode2d 推进; ms = smoothstep(mt)。
@@ -252,11 +253,20 @@ export function createTraceGlobe(canvas, opts = {}) {
     }
     const qy = qAxis(0, 1, 0, dx / R), qx = qAxis(1, 0, 0, dy / R)
     q = qNorm(qMul(qMul(qx, qy), q))
+    // 锁定正北: trackball 会累积出 roll, 故每步把朝向拆成欧拉角、把 γ(屏内 roll)清零再重建 ——
+    // 中心经纬不变(只去掉扭转), 北极始终朝上。
+    if (lockNorth) { const e = mvEuler(qMat(q)); q = eulerToQ(e[0] * D2R, e[1] * D2R, 0) }
     cam.flying = false; userMoved = true
   }
   // 右键拖动: 绕视线轴 roll(转动地球仪的「角度」)。da = 指针绕球心的角度变化(球心附近已钳制限速)。
-  // 2D 地图必须北朝上, roll 无意义 → 仅纯 3D 生效。
-  function rollRotate(da) { if (mt > 0) return; q = qNorm(qMul(qAxis(0, 0, 1, da), q)); cam.flying = false; userMoved = true; homing = false }
+  // 2D 地图必须北朝上, roll 无意义 → 仅纯 3D 生效; 锁定正北时也禁用。
+  function rollRotate(da) { if (mt > 0 || lockNorth) return; q = qNorm(qMul(qAxis(0, 0, 1, da), q)); cam.flying = false; userMoved = true; homing = false }
+  // 切换正北锁定: 开启时把当前朝向缓飞到「同中心、零 roll」的姿态, 平滑摆正北极。
+  function setLockNorth(b) {
+    const on = !!b; if (on === lockNorth) return
+    lockNorth = on
+    if (on && mt === 0) { const e = mvEuler(qMat(q)); cam.q = eulerToQ(e[0] * D2R, e[1] * D2R, 0); cam.flying = true; cam.flyT = 0 }
+  }
 
   // ── 统一投影 ── 地理 → 屏幕。ms=0 纯 3D(四元数+正交); ms=1 纯 2D(墨卡托); 形变期屏幕空间
   // 线性混合 → 每个点沿「球面位置 → 平面位置」滑行。z: 3D 深度(背面<0), 混合时拉向 1 ——
@@ -288,7 +298,7 @@ export function createTraceGlobe(canvas, opts = {}) {
       cam2.Y = clamp(mercYof(clamp(latDeg, -60, 60) * D2R), -MERC_MAX, MERC_MAX)
       cam2.on = true; cam2.t = 0; return
     }
-    const roll = mvEuler(qMat(q))[2] * D2R
+    const roll = lockNorth ? 0 : mvEuler(qMat(q))[2] * D2R   // 锁定正北时缓飞落点也北极朝上
     cam.q = eulerToQ(-lonDeg * D2R, -clamp(latDeg, -60, 60) * D2R, roll)
     cam.flying = true; cam.flyT = 0
   }
@@ -326,6 +336,7 @@ export function createTraceGlobe(canvas, opts = {}) {
   let probes = []              // [{ ...vp, rgb, hops:[{la,lo,...}], segGrow:[], waveT, waveSeg, nDone }]
   let activeProbe = null       // hover/选中高亮的 probe id(null=全亮)
   let hidden = new Set()       // 被用户隐藏的 probe id: 其路径/节点/包/源点都不画、也不参与命中
+  let hideLoc = false          // 隐藏全部探测点光点(NextTrace traceMap 模式: 与 globalping 测点无关)
   const packets = []
   let pktAcc = 0
   let targetKey = null         // 目标稳定键(仅目标真的换了才重新缓飞相机, 不被逐跳更新打断)
@@ -761,7 +772,7 @@ export function createTraceGlobe(canvas, opts = {}) {
   // 画在路径/节点之下(背景网络感), 同时把屏幕位置压进 locHits 供命中检测。
   function drawLocations(P) {
     locHits.length = 0
-    if (!locations.length) return
+    if (hideLoc || !locations.length) return
     for (const L of locations) {
       const p = projectLL(L.la, L.lo); if (p.z <= .04) continue
       const sx = p.sx, sy = p.sy, z = clamp(p.z, 0, 1)
@@ -783,6 +794,7 @@ export function createTraceGlobe(canvas, opts = {}) {
   }
   function setLocations(list) { locations = (list || []).map(L => ({ ...L, la: L.lat * D2R, lo: L.lon * D2R })) }
   function setHold(h) { hold = !!h }
+  function setHideLoc(b) { hideLoc = !!b }
 
   // ── 主循环 ──
   let introT = 0, last = performance.now(), raf = 0
@@ -1040,7 +1052,7 @@ export function createTraceGlobe(canvas, opts = {}) {
   raf = requestAnimationFrame(frame)
 
   return {
-    setData, setLocations, setHold, setMode, focus, setHidden, recenter, reset, setHome,
+    setData, setLocations, setHold, setMode, focus, setHidden, setHideLoc, setLockNorth, recenter, reset, setHome,
     destroy() {
       cancelAnimationFrame(raf); ro.disconnect()
       window.removeEventListener('mousemove', onMove); surf.removeEventListener('mouseleave', onLeave); surf.removeEventListener('mousedown', onDown)

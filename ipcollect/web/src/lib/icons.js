@@ -9,6 +9,7 @@ export {
   faServer as iOrigin,
   faLocationCrosshairs as iSubnet,
   faCrosshairs as iRecenter,
+  faCompass as iCompass,
   faListOl as iLimit,
   faEyeSlash as iLowvis,
   faEye as iVisible,

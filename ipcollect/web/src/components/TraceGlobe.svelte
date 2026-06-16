@@ -5,7 +5,7 @@
   import { createTraceGlobe } from '../lib/traceglobe.js'
   import { ccLatLon, fetchTrace } from '../lib/geo.js'
 
-  let { model = null, locations = null, focusId = null, hidden = null, hold = false, mode2d = false, onpick = null, onhover = null, onlochover = null, onengine = null } = $props()
+  let { model = null, locations = null, focusId = null, hidden = null, hideLocations = false, lockNorth = true, hold = false, mode2d = false, onpick = null, onhover = null, onlochover = null, onengine = null } = $props()
 
   let canvasEl, hitEl, tipEl, ctrl
   // 初始视角定位到用户所在国家/地区: 用自有域 default.peer.as 的 trace 取 loc=国家码 → 国家质心经纬度。
@@ -16,7 +16,7 @@
     }).catch(() => { /* 定位失败: 保持默认初始朝向 */ })
   }
   onMount(() => {
-    ctrl = createTraceGlobe(canvasEl, { tip: tipEl, hit: hitEl, mode2d, onpick, onhover, onlochover })
+    ctrl = createTraceGlobe(canvasEl, { tip: tipEl, hit: hitEl, mode2d, lockNorth, onpick, onhover, onlochover })
     if (locations) ctrl.setLocations(locations)   // 初帧即铺光点(不等首次 reactive)
     if (model) ctrl.setData(model)
     onengine && onengine(ctrl)                    // 把引擎句柄交给父组件(供复位按钮调用)
@@ -28,6 +28,8 @@
   $effect(() => { ctrl?.setHold(hold) })
   $effect(() => { ctrl?.focus(focusId) })
   $effect(() => { ctrl?.setHidden(hidden) })
+  $effect(() => { ctrl?.setHideLoc(hideLocations) })
+  $effect(() => { ctrl?.setLockNorth(lockNorth) })
   $effect(() => { ctrl?.setMode(mode2d) })
 </script>
 
