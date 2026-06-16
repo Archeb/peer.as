@@ -12,6 +12,7 @@
   import { asnName } from '../lib/bgp.js'
   import { iPlay, iStop, iClose, iChevD, iChevR, iProbe, iClock, iGear, iInfinity, iSearch, iClear, iPlus, iCity, iCountry, iNet, iLoc, iRecenter, iVisible, iLowvis } from '../lib/icons.js'
   import { streamTrace } from '../lib/globalping.js'
+  import { loadNTraceMap } from '../lib/ntrace-map.js'
   import { loadProbeLocations } from '../lib/trace-probes.js'
   import { setGeoSource } from '../lib/geo-resolve.js'
   import MobileBar from './MobileBar.svelte'
@@ -176,6 +177,13 @@
   }
   let trace = $state({ target: null, probes: [] })   // 引擎 + 列表的单一数据源(从 globalping 事件流重建)
   let running = $state(false)
+  let remoteLoading = $state(false)      // 正在加载 NextTrace traceMap JSON
+  let loadedNTraceId = $state('')        // 当前显示的 traceMap id(空 = globalping/live 模式)
+  let ntraceHtmlUrl = $state('')
+  let ntraceGenerated = $state('')
+  let ntraceSeq = 0
+  let currentNTraceId = ''
+  let pendingNTraceId = ''
   let errMsg = $state('')               // 发起失败(配额/网络)文案
   let focusId = $state(null)            // hover 某监测点 → 地球上高亮它的路径
   let openRows = $state(new Set())      // 展开查看逐跳的监测点
@@ -265,13 +273,64 @@
     return () => { ctl?.cancel(); window.removeEventListener('pointermove', onGesture); window.removeEventListener('pointerup', endGesture) }
   })
 
+  $effect(() => {
+    const id = (S.trace?.ntraceId || '').trim()
+    if (id) loadRemoteTrace(id)
+    else if (currentNTraceId || pendingNTraceId) resetRemoteTrace()
+  })
+
+  function resetRemoteTrace() {
+    ctl?.cancel(); ctl = null; ntraceSeq++
+    running = false
+    currentNTraceId = ''; pendingNTraceId = ''
+    loadedNTraceId = ''; ntraceHtmlUrl = ''; ntraceGenerated = ''; remoteLoading = false
+    trace = { target: null, probes: [] }
+    focusId = null; openRows = new Set(); rawView = new Set(); hiddenProbes = new Set(); errMsg = ''
+  }
+
+  function loadRemoteTrace(id) {
+    if (!id || id === currentNTraceId || id === pendingNTraceId) return
+    ctl?.cancel()
+    const ac = new AbortController()
+    const seq = ++ntraceSeq
+    ctl = { cancel() { ac.abort(); ntraceSeq++ } }
+    pendingNTraceId = id
+    running = true; remoteLoading = true; errMsg = ''; focusId = null
+    openRows = new Set(); rawView = new Set(); hiddenProbes = new Set()
+    trace = { target: null, probes: [] }
+    loadNTraceMap(id, ac.signal).then(model => {
+      if (seq !== ntraceSeq) return
+      currentNTraceId = id; pendingNTraceId = ''
+      loadedNTraceId = id
+      ntraceHtmlUrl = model.htmlUrl || ''
+      ntraceGenerated = model.generatedAt || ''
+      box = model.target?.label || model.target?.ip || ''
+      trace = model
+      openRows = new Set((model.probes || []).map(p => p.id))
+      running = false; remoteLoading = false; ctl = null
+    }).catch(e => {
+      if (seq !== ntraceSeq || e?.name === 'AbortError') return
+      currentNTraceId = ''; pendingNTraceId = ''
+      loadedNTraceId = ''; ntraceHtmlUrl = ''; ntraceGenerated = ''
+      running = false; remoteLoading = false; ctl = null
+      errMsg = `${t('rt_ntrace_err')}: ${e?.message || ''}`
+    })
+  }
+
+  function clearNTraceUrl() {
+    if (location.pathname.replace(/^\/+|\/+$/g, '') === 'trace' && new URLSearchParams(location.search).has('nt')) {
+      window.history.replaceState(window.history.state || {}, '', '/trace')
+    }
+  }
+
   function launch(tg) {
     const target = (tg ?? box).trim()
     if (!target) return
     if (!totalProbes) { errMsg = t('rt_pick_probes'); probesOpen = true; return }
     setGeoSource(geoSource)   // 发起前确保 GeoIP 源已生效(防 HMR/时序导致未应用)
     box = target; ranFor = target; addHistory(target)
-    ctl?.cancel()
+    ctl?.cancel(); currentNTraceId = ''; pendingNTraceId = ''; loadedNTraceId = ''; ntraceHtmlUrl = ''; ntraceGenerated = ''; remoteLoading = false
+    if (S.trace?.ntraceId) { S.trace = { target: '' }; clearNTraceUrl() }
     dropOpen = false; running = true; focusId = null; errMsg = ''
     trace = { target: null, probes: [] }
     // 已选条件 → globalping locations: city 走 {city,country(ISO cc),limit}; net/magic 走 {magic,limit}。
@@ -319,12 +378,21 @@
       onError(e) { running = false; errMsg = e?.message === 'rate-limited' ? t('rt_err_rate') : `${t('rt_err')}: ${e?.message || ''}` },
     }, { type: mtr.type, infinite: mtr.infinite, family: mtr.family, proto: mtr.proto, port: mtr.port, packets: mtr.packets })
   }
-  function stop() { ctl?.cancel(); running = false }
+  function stop() {
+    ctl?.cancel(); running = false
+    if (pendingNTraceId) {
+      pendingNTraceId = ''; remoteLoading = false
+      trace = { target: null, probes: [] }
+    }
+  }
   // 清除地球 + panel 上的全部结果(保留输入/选点, 可直接重跑)
   function clearResults() {
     ctl?.cancel(); running = false
     trace = { target: null, probes: [] }
-    focusId = null; openRows = new Set(); rawView = new Set(); hiddenProbes = new Set(); ranFor = ''; S.trace.target = ''; errMsg = ''
+    focusId = null; openRows = new Set(); rawView = new Set(); hiddenProbes = new Set(); ranFor = ''; S.trace = { target: '' }; errMsg = ''
+    currentNTraceId = ''; pendingNTraceId = ''
+    loadedNTraceId = ''; ntraceHtmlUrl = ''; ntraceGenerated = ''; remoteLoading = false
+    clearNTraceUrl()
   }
   function submit(e) { e?.preventDefault(); launch() }
   function clearBox() { box = ''; inputEl?.focus() }
@@ -521,7 +589,9 @@
       {/if}
 
       <!-- 发起失败提示(配额/网络/未选点) -->
-      {#if errMsg && !trace.probes.length}
+      {#if remoteLoading && !trace.probes.length}
+        <div class="rtinfo"><span class="spin"></span>{t('rt_ntrace_loading')}</div>
+      {:else if errMsg && !trace.probes.length}
         <div class="rterr">{errMsg}</div>
       {/if}
 
@@ -535,6 +605,10 @@
                 <button class="rip" onclick={() => pick(trace.target.ip)} title={trace.target.ip}>{trace.target.ip}</button>
               {/if}
               {#if trace.target?.loc}<span class="rloc" title={trace.target.loc}><Fa icon={iLoc} />{trace.target.loc}</span>{/if}
+              {#if loadedNTraceId}
+                <a class="rsource" href={ntraceHtmlUrl || ('https://assets.nxtrace.org/tracemap/' + loadedNTraceId + '.html')}
+                   target="_blank" rel="noopener noreferrer" title={ntraceGenerated || loadedNTraceId}>{t('rt_ntrace_loaded')}</a>
+              {/if}
               <span class="rcount">{doneCount}/{trace.probes.length}</span>
               <button class="rclear" onclick={clearResults} title={t('rt_clear')} aria-label={t('rt_clear')}><Fa icon={iClear} /></button>
             </div>
@@ -990,6 +1064,7 @@
   /* 监测点加载 / 失败提示 */
   .probemsg { display: flex; align-items: center; justify-content: center; gap: 8px; padding: 18px 0; font: 500 12.5px var(--sans); color: var(--muted); }
   .probemsg.err { color: #ef4444; }
+  .rtinfo { flex: 0 0 auto; display: flex; align-items: center; gap: 8px; padding: 9px 12px; border: 1px solid var(--line); border-radius: 9px; background: color-mix(in srgb, var(--accent) 8%, transparent); color: var(--muted); font: 500 12.5px var(--sans); animation: drop .16s ease; }
   /* 发起失败提示条 */
   .rterr { flex: 0 0 auto; padding: 9px 12px; border: 1px solid color-mix(in srgb, #ef4444 40%, var(--line)); border-radius: 9px; background: color-mix(in srgb, #ef4444 10%, transparent); color: #ef4444; font: 500 12.5px var(--sans); animation: drop .16s ease; }
   /* 头部一行: 目标 / 解析 IP / 归属地 / 进度 / 清除 —— 全在 rhead 内, 不换行 */
@@ -1000,6 +1075,8 @@
   .rip:hover { text-decoration: underline; }
   .rloc { flex: 1 1 auto; display: inline-flex; align-items: center; gap: 4px; min-width: 0; font: 500 11.5px var(--sans); color: var(--muted); overflow: hidden; white-space: nowrap; }
   .rloc :global(svg) { width: 9px; flex: 0 0 auto; }
+  .rsource { flex: 0 0 auto; color: var(--accent); text-decoration: none; font: 600 11px var(--sans); border: 1px solid color-mix(in srgb, var(--accent) 42%, var(--line)); border-radius: 999px; padding: 2px 7px; white-space: nowrap; }
+  .rsource:hover { background: var(--accent-dim); }
   .rcount { flex: 0 0 auto; margin-left: auto; }
   .rclear { flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; padding: 0; background: transparent; border: 0; color: var(--muted); cursor: pointer; transition: color .12s; }
   .rclear:hover { color: var(--fg); }

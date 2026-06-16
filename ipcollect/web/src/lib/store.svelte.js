@@ -16,7 +16,8 @@ export const S = $state({
   // 侧栏/移动菜单切换; URL /whois[/<q>] 进 whois, /trace[/<target>] 进 trace, 其余回 routing(见 queries.applyRoute)。
   // dn42 站经 features.whoisView=false / features.routeTrace=false 关掉整条视图(no-op), 此字段恒为 'routing'。
   view: 'routing',
-  // 全球路由跟踪视图载荷: target=当前跟踪目标(IP/域名)。实际 MTR 模型在 RouteTraceView 本地态(从流式事件重建)。
+  // 全球路由跟踪视图载荷: target=当前跟踪目标(IP/域名); ntraceId=NextTrace traceMap JSON 深链。
+  // 实际 MTR/traceMap 模型在 RouteTraceView 本地态(从流式事件/JSON 重建)。
   trace: { target: '' },
   // WHOIS·RDAP 独立视图载荷: input=用户原始输入串; kind/key=解析后传给 Whois 组件
   // (kind: 'autnum'|'ip'|'domain'; key=ASN号/IP·前缀串/可注册域名); err=识别失败的 i18n 键(空=正常)。

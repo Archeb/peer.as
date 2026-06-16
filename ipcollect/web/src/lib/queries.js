@@ -783,8 +783,7 @@ export function collapseProbe() {
 }
 
 // ── 全球路由跟踪视图 ───────────────────────────────────────────────
-// 侧栏/移动菜单入口: 切到 trace 视图。trace 只有 /trace 这一个路径 —— 目标不进 URL、
-// 也不从 URL 带参发起(深链/前进后退不携带 IP)。
+// 侧栏/移动菜单入口: 切到干净 trace 视图；NextTrace traceMap 深链走 /trace?nt=<id>。
 export function openTrace() { setView('trace') }
 
 // ── 结果表分页 + 导出 ─────────────────────────────────────────────
@@ -854,6 +853,7 @@ export function setView(v) {
     go(inp ? '/whois/' + encodeURIComponent(inp) : '/')   // 首页 = /
   } else if (v === 'trace') {
     S.view = 'trace'                                       // 全球路由跟踪(不依赖 DuckDB 引擎); 只有 /trace 一个路径
+    S.trace = { target: '' }
     go('/trace')
   } else {
     if (v === S.view) return
@@ -932,13 +932,16 @@ export async function applyRoute({ initial = false } = {}) {
       S.probeExpanded = (path === 'probe')   // /probe -> 直接进「IP 探测」摊开态(runWhois 已先置 false)
       return
     }
-    // /trace -> 全球路由跟踪(纯前端 MTR 可视化, 不碰 DuckDB 引擎)。
-    // 只认 /trace 这一个路径: 任何 /trace/<...> 深链都不带参发起, 一律落到干净的 /trace。
+    // /trace[?nt=<id>] -> 全球路由跟踪(纯前端 MTR/traceMap 可视化, 不碰 DuckDB 引擎)。
+    // ?nt= NextTrace traceMap JSON 深链；路径段仍规范化掉，避免和 IP/prefix 路由冲突。
     if (features.routeTrace && (path === 'trace' || path.startsWith('trace/'))) {
       S.loading = false
       S.view = 'trace'
-      S.trace = { target: '' }
-      if (path !== 'trace') go('/trace')   // 规范化掉 URL 里的目标段
+      const nt = (sp.get('nt') || '').trim()
+      S.trace = { target: '', ntraceId: nt }
+      if (path !== 'trace' && typeof history !== 'undefined') {
+        history.replaceState(history.state || { idx: S.nav.idx }, '', nt ? `/trace?nt=${encodeURIComponent(nt)}` : '/trace')
+      }
       return
     }
     // 路由分析需 DuckDB 引擎: 懒加载(首次), 就绪后再跑下面的 runSearch/runDns/runAsSet。失败则 S.fatal 已置, 直接退出。

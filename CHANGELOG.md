@@ -6,6 +6,15 @@ PEER.AS 的功能更新记录。仅记录**面向用户的功能性变更**（�
 Feature-level changelog for PEER.AS. Only **user-facing functional changes** are listed
 (new features, visible behavior changes); pure maintenance/refactors/data refreshes are omitted. Newest first.
 
+## 2026-06-16
+
+- **新增：NextTrace traceMap 可直接在全球网测地球上打开。** NextTrace 生成的 traceMap 链接现在可通过
+  `peer.as/trace?nt=<id>` 在 PEER.AS 的全球网测界面复用现有地球可视化查看，逐跳路径、目标位置和原始 traceMap
+  来源链接会一并显示；原有 globalping 实时网测流程不变。
+  **Added: NextTrace traceMap can open directly on the global trace globe.** NextTrace-generated traceMap results can now
+  be viewed through PEER.AS at `peer.as/trace?nt=<id>`, reusing the existing globe visualization with hop paths, target
+  location and a source link back to the original traceMap; the existing live globalping flow is unchanged.
+
 ## 2026-06-13
 
 - **新增：AS_PATH 显示并标注 prepend（`ASN ×N`）。** 详情面板的观测路径列表现在**保留 AS prepend**——某个 AS 在路径里连续出现多次会折叠成 `ASN ×N`，悬停提示「AS prepend ×N」。prepend 是各网络表达**入向流量工程（inbound TE）**的信号，之前被折叠丢掉了，现在能看到了。
