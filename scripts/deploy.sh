@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # scripts/deploy.sh — PEER.AS 唯一部署入口（cron / 手动 / 开发都走这里，结果完全一致）。
-# 用法: scripts/deploy.sh [--data] [--no-build] [--cf-only|--cn-only]
-#   (无 flag)   build 前端 + 部署两端（复用现有 dist/data）   —— 改了前端后推送 / 只动前端
-#   --data      先 ingest --reset + export-parquet 重建数据，再 build + 部署 —— daily refresh / 全重推数据
-#   --no-build  跳过 npm build，用现有 web/dist（少用；纯重新部署现有 dist）
+# 用法: scripts/deploy.sh [--data|--data-light] [--no-build] [--cf-only|--cn-only]
+#   (无 flag)    build 前端 + 部署两端（复用现有 dist/data）   —— 改了前端后推送 / 只动前端
+#   --data       先 ingest --reset(全量 4 采集点) + export-parquet 重建数据 —— daily refresh / 全重推
+#   --data-light 仅重灌 REFRESH_ONLY(默认 route-views2 每 2h) + export —— 增量轻刷新, 需先 --data 打底
+#   --no-build   跳过 npm build，用现有 web/dist（少用；纯重新部署现有 dist）
 #   --cf-only / --cn-only   只部署一端（默认 CF + CN 两端都部署）
 # 设计：数据(ingest+export)、前端(build)、部署(CF+CN) 三段；部署核心只实现这一份。
 set -euo pipefail
@@ -20,23 +21,28 @@ case ":$PATH:" in *":/usr/lib/node-24/bin:"*) ;; *) export PATH="/usr/lib/node-2
 
 usage(){ cat <<'EOF'
 scripts/deploy.sh — PEER.AS 唯一部署入口（cron / 手动 / 开发都走这里，结果一致）。
-用法: scripts/deploy.sh [--data] [--no-build] [--cf-only|--cn-only]
-  (无 flag)   build 前端 + 部署两端（复用现有 dist/data）       改了前端后推送 / 只动前端
-  --data      ingest --reset + export-parquet 重建数据，再 build + 部署   daily refresh / 全重推数据
-  --no-build  跳过 npm build，用现有 web/dist（纯重新部署现有 dist）
+用法: scripts/deploy.sh [--data|--data-light] [--no-build] [--cf-only|--cn-only]
+  (无 flag)    build 前端 + 部署两端（复用现有 dist/data）       改了前端后推送 / 只动前端
+  --data       ingest --reset(全量) + export-parquet 重建数据，再 build + 部署   daily refresh / 全重推
+  --data-light 仅重灌 REFRESH_ONLY(默认 route-views2) + export   增量轻刷新, 需先 --data 打底
+  --no-build   跳过 npm build，用现有 web/dist（纯重新部署现有 dist）
   --cf-only / --cn-only   只部署一端（默认 CF + CN 两端）
 EOF
 }
 
-WITH_DATA=0; DO_BUILD=1; TARGET=both
+WITH_DATA=0; WITH_DATA_LIGHT=0; DO_BUILD=1; TARGET=both
+# 增量轻刷新只重灌发布周期短的采集点(默认 route-views2 每 2h); 其余采集点 obs 原样保留。可用 REFRESH_ONLY 覆盖。
+REFRESH_ONLY="${REFRESH_ONLY:-route-views2}"
 for a in "$@"; do case "$a" in
-  --data)     WITH_DATA=1 ;;
-  --no-build) DO_BUILD=0 ;;
-  --cf-only)  TARGET=cf ;;
-  --cn-only)  TARGET=cn ;;
-  -h|--help)  usage; exit 0 ;;
+  --data)       WITH_DATA=1 ;;
+  --data-light) WITH_DATA_LIGHT=1 ;;
+  --no-build)   DO_BUILD=0 ;;
+  --cf-only)    TARGET=cf ;;
+  --cn-only)    TARGET=cn ;;
+  -h|--help)    usage; exit 0 ;;
   *) echo "未知参数: $a（见 --help）" >&2; exit 2 ;;
 esac; done
+[ "$WITH_DATA" = 1 ] && [ "$WITH_DATA_LIGHT" = 1 ] && { echo "--data 与 --data-light 互斥" >&2; exit 2; }
 
 log(){ echo "[$(date -Is)] $*"; }
 
@@ -79,7 +85,7 @@ read -r SITE CN_MIRROR CF_PROJECT PRIMARY_HOST <<<"$_prof"
 [ -n "${SITE:-}" ] || { SITE=peeras; CN_MIRROR=1; CF_PROJECT=bgp-insights; PRIMARY_HOST=peer.as; }
 export VITE_SITE="$SITE"   # npm build(ipc build)据此产出对应站点前端
 
-log "deploy 开始: site=$SITE host=$PRIMARY_HOST data=$WITH_DATA build=$DO_BUILD target=$TARGET cn_mirror=$CN_MIRROR cf_project=$CF_PROJECT"
+log "deploy 开始: site=$SITE host=$PRIMARY_HOST data=$WITH_DATA data_light=$WITH_DATA_LIGHT$([ "$WITH_DATA_LIGHT" = 1 ] && echo "($REFRESH_ONLY)") build=$DO_BUILD target=$TARGET cn_mirror=$CN_MIRROR cf_project=$CF_PROJECT"
 
 # ── 1) 数据（可选）──────────────────────────────────────────────────────────
 if [ "$WITH_DATA" = 1 ]; then
@@ -109,6 +115,21 @@ if [ "$WITH_DATA" = 1 ]; then
   IMP_RC=0; wait "$IMP_PID" || IMP_RC=$?
   log "  ↓ 下载阶段(rpki/irr/asset)输出"; cat "$imp_log" 2>/dev/null || true; rm -f "$imp_log"
   [ "$IMP_RC" = 0 ] || log "  ! 下载阶段退出码=$IMP_RC（各步已各自容错, 不阻断 export）"
+  ./ipc export-parquet --out dist
+
+elif [ "$WITH_DATA_LIGHT" = 1 ]; then
+  # 增量轻刷新(路径 2a): 仅重灌 REFRESH_ONLY 列出的采集点(发布周期短, 如 route-views2 每 2h),
+  #   其余采集点 obs 沿用上次全量结果。需先有一次 --data 全量打底(obs 持久在 ipcollect.duckdb)。
+  #   不重跑 rpki/irr/asset(沿用上次 cache); finalize+export 仍是全量(故产物仍是完整快照, 过数据闸)。
+  log "数据(轻): 增量重灌采集点 [$REFRESH_ONLY] —— 其余 obs 保留, 不动 rpki/irr/asset"
+  rm -rf "$PROJ"/cache/duck_tmp/* 2>/dev/null || true
+  for c in ${REFRESH_ONLY//,/ }; do
+    rm -f "$PROJ"/cache/mrt/"$c"-* 2>/dev/null || true   # 清该采集点旧快照, 免堆积
+  done
+  ING_RC=0; ./ipc ingest --only "$REFRESH_ONLY" || ING_RC=$?
+  if [ "$ING_RC" != 0 ]; then
+    log "✗ 轻刷新 ingest 失败(rc=$ING_RC; 未全量打底? 用 --data) —— 中止部署"; exit 1
+  fi
   ./ipc export-parquet --out dist
 fi
 
@@ -197,7 +218,7 @@ deploy_cf(){
   rm -f "$STAGE"/assets/*.wasm 2>/dev/null || true
   log "CF: wrangler pages deploy → 项目 $CF_PROJECT（排除超限 wasm；CF 节点 wasm 回退 CDN）"
   wrangler pages deploy "$STAGE" --project-name "$CF_PROJECT" --branch main --commit-dirty=true \
-    --commit-message="deploy.sh $SITE $([ "$WITH_DATA" = 1 ] && echo 'data+web' || echo web)" || rc=$?
+    --commit-message="deploy.sh $SITE $({ [ "$WITH_DATA" = 1 ] || [ "$WITH_DATA_LIGHT" = 1 ]; } && echo 'data+web' || echo web)" || rc=$?
   rm -rf "$STAGE"
   return $rc
 }

@@ -54,8 +54,9 @@ def cmd_ingest(args):
     cfg = config.load()
     con = store.connect()
     try:
+        only = [c.strip() for c in args.only.split(",") if c.strip()] if args.only else None
         r = mrt.ingest(con, cfg, mrt_file=args.mrt_file, url=args.url,
-                       reset=args.reset, limit=args.limit, family=args.family)
+                       reset=args.reset, limit=args.limit, family=args.family, only=only)
     finally:
         con.close()
     print(f"ingest 完成: {r}")
@@ -152,6 +153,7 @@ def build_parser():
 
     s = sub.add_parser("ingest", help="下载并解析各采集点 RIB 入 DuckDB 工作库(全表 v4+v6)")
     s.add_argument("--reset", action="store_true", help="清空旧数据重建")
+    s.add_argument("--only", help="仅重灌这些采集点(逗号分隔; 其余 obs 保留)——按采集点增量刷新, 需先全量打底")
     s.add_argument("--limit", type=int, help="每采集点最多入库前缀数(调试)")
     s.add_argument("--mrt-file", help="用本地 MRT 文件而非下载(单文件, 调试)")
     s.add_argument("--url", help="指定单个 RIB URL")

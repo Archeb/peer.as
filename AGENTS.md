@@ -65,11 +65,17 @@
 ## 数据维护命令
 
 ```bash
-./ipc ingest --reset            # 下载 4 采集点最新 RIB, 全表 v4+v6 入 DuckDB（约 40-45min）。改采集点后必须重跑
+./ipc ingest --reset            # 下载 4 采集点最新 RIB, 全表 v4+v6 入 DuckDB。改采集点后必须重跑
+./ipc ingest --only route-views2 # 增量: 只重灌列出的采集点(其余 obs 保留, finalize 仍全量合并)。需先 --reset 打底
 ./ipc export-parquet --out dist # 工作库 -> dist/data/parquet + meta.json + SSG（约 3-5min）。主发布步骤
 ./ipc build                     # 只改前端时: npm run build + 拷 web/dist -> dist/（秒级, 不碰数据）
 ./ipc serve                     # 本地看站 http://127.0.0.1:8787/
 ```
+
+- **ingest 按采集点并行解析**（进程池绕 GIL, fork 上下文; 子进程纯解析不碰 DuckDB, 父进程串行灌库）：
+  4 采集点墙钟 = 最慢单点(~12min) 而非相加(~27min)。DuckDB 线程默认吃满核(`min(8,核数)`, 可 `IPC_DUCKDB_THREADS` 调小)。
+- **各采集点真实快照时刻**记进 meta `mrt_snap_<collector>`(RIB 文件名的 UTC 时刻) / `ingest_ts_<collector>`(本机灌入时刻)——
+  采集点发布周期不同(RIS bview 8h / RouteViews RIB 2h)故时龄天然不齐, 这是多视角 BGP 语义、非 bug; meta 留作透明化。
 
 - geo 库 ingest 会自动按需重建（GeoLite 过期才下）；手动 `./ipc geo-import`。
 - DuckDB 溢出目录走真盘（`cache/duck_tmp`，别用 /tmp tmpfs）；内存紧可 `IPC_DUCKDB_MEM=8GB IPC_DUCKDB_THREADS=2`。
@@ -85,7 +91,7 @@
 1. dev worktree 改完 → `git add` **只加改的源文件**（**绝不 `git add -A`**：`public/data`/`duckdb-ext`/`.venv` 是本地 symlink，不该提交）→ commit。
 2. `git fetch origin` → 不能 ff（origin/main 被 dn42 推进、分叉）则 `git rebase origin/main`（可能撞 `AGENTS.md`/`db.js`）。
 3. `git push origin dev:main`。**GitOps 唯一真源 = `origin/main`；不 push 到 main，线上 ≤8h 被 cron 回滚。**
-4. **从主 checkout** `cd /home/aosc/test-ip-collect && scripts/deploy.sh`：只动前端→无 flag；改了数据/全重推→`--data`。脚本自己 GitOps ff、`npm build`、数据闸校验、推 **CF(前端+数据) + CN(镜像)** 两端、末尾核两端入口一致。
+4. **从主 checkout** `cd /home/aosc/test-ip-collect && scripts/deploy.sh`：只动前端→无 flag；改了数据/全重推→`--data`；只刷高频采集点(route-views2)→`--data-light`(增量, 需先 `--data` 打底过)。脚本自己 GitOps ff、`npm build`、数据闸校验、推 **CF(前端+数据) + CN(镜像)** 两端、末尾核两端入口一致。
    - **绝不在缺 `.env` 的 worktree 跑 deploy.sh**（CN 凭据只在 `.env`，缺则 CN 静默跳过→两端不一致）；**绝不手敲 wrangler/rsync/手动 build**。
 5. 成功 = 日志末尾 `完成 ✅`。dn42 由其自己的 10min cron 自动同步，无需手动。
 
@@ -110,9 +116,16 @@
 CF Pages 在中国大陆慢（跨境限速/丢包）。方案：一台优化线路 VPS（Caddy）托管**与 peer.as 完全一致的整站**（前端 + 数据 + 自托管 DuckDB-WASM），`deploy.sh` 的 CN 步 rsync 整个 `dist/` 过去。GeoDNS 把境内 `peer.as` 解到本机（需本机有 peer.as 的 TLS 证书，LE 走 DNS-01）。
 DuckDB-WASM、Cache Storage 大 wasm 缓存、parquet 扩展自托管、全 GET 模式、Caddy 配置（CORS、关 h3、DoH/WHOIS 境内反代）等实现细节较多且稳定，**见 `web/src/lib/db.js` 与 `deploy/cn.peer.as.Caddyfile` 源码**，不在此复述。
 
-### cron 自动刷新（每 8h）
+### cron 自动刷新（全量 8h + 轻量 2h）
 
-`scripts/daily-refresh.sh`（fcron 薄封装）= `exec scripts/deploy.sh --data`（清缓存 → ingest → export → build → 部署 CF+CN）。频率每 8h（`40 0,8,16 * * *`，对齐 RIPE RIS bview 发布节奏）。`flock` 防并发。改 cron 用 `fcrontab -` stdin 灌入（直接 `fcrontab 文件` 在无 tty 下会段错误）。wrangler OAuth 过期会让 CF 步失败 → 重 `wrangler login`。
+`scripts/daily-refresh.sh`（fcron 薄封装）把参数**原样透传** deploy.sh（无参 = `--data` 全量）。两条 peeras cron 行：
+
+- **全量** `40 0,8,16 * * *  …/daily-refresh.sh`（每 8h，对齐 RIPE RIS bview UTC 00/08/16 + 40min）。
+- **轻量** `40 2,4,6,10,12,14,18,20,22 * * *  …/daily-refresh.sh --data-light`（其余偶数点 +40min，每 2h 刷 route-views2，对齐 RouteViews 2h RIB）。
+  净效果：**route-views2 视角 ≤2h 新鲜，RIS 视角 ≤8h**（采集点发布周期不同，时龄不齐是常态，见「数据维护命令」）。
+
+`flock`(deploy.sh 内) 防并发：轻量若撞上未跑完的全量会自动跳过。日志按 full/light 分桶轮转。改 cron 用 `fcrontab -` stdin 灌入（直接 `fcrontab 文件` 在无 tty 下会段错误）。wrangler OAuth 过期会让 CF 步失败 → 重 `wrangler login`。
+> **传播**：`--data-light` 依赖主 checkout 已拉到含该 flag 的代码；首次 cron 触发时旧 `daily-refresh.sh` 会忽略参数跑全量，deploy.sh 自身 GitOps ff 更新工作树后，下一次轻量即生效（自愈）。
 
 ## 不变量 / 常见坑（改动前必读）
 

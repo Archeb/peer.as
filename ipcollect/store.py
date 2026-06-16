@@ -52,7 +52,9 @@ def connect(path: Optional[Path] = None, *, read_only: bool = False):
     import duckdb
     p = str(path or util.DUCK_PATH)
     con = duckdb.connect(p, read_only=read_only)
-    con.execute(f"PRAGMA threads={os.environ.get('IPC_DUCKDB_THREADS', '4')};")
+    # 默认吃满核(留给系统 ~无)——finalize/export 的 GROUP BY/排序是多线程瓶颈; 内存紧可用 IPC_DUCKDB_THREADS 调小。
+    default_threads = str(min(8, max(2, (os.cpu_count() or 4))))
+    con.execute(f"PRAGMA threads={os.environ.get('IPC_DUCKDB_THREADS', default_threads)};")
     con.execute(f"PRAGMA memory_limit='{os.environ.get('IPC_DUCKDB_MEM', '16GB')}';")
     # 溢出目录必须落真盘(/tmp 多为 tmpfs=RAM, 往那溢出照样 OOM)。见 parquet_export._duck。
     tmp = os.environ.get("IPC_DUCKDB_TMP") or str(util.CACHE_DIR / "duck_tmp")

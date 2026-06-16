@@ -339,9 +339,25 @@ def iter_prefixes(
 # ----------------------------------------------------------------------------
 # 入库(DuckDB 工作库; 多采集点; v4+v6)
 # ----------------------------------------------------------------------------
-def _ingest_one(con, mrt_file: str, collector: str, keep_pred,
-                limit: Optional[int]) -> tuple[int, int]:
-    """解析单个 collector 的 RIB, 把去重后的 (prefix,path) 行写进 obs。返回 (前缀数, obs 行数)。
+def _snap_ts(url: str) -> Optional[int]:
+    """从 RIB/bview 文件名解析快照时刻(UTC) -> epoch 秒。文件名形如 rib.YYYYMMDD.HHMM.bz2 / bview.*.gz。
+    供 meta 记录**各采集点数据的真实时龄**(不同采集点发布周期不同, 见 AGENTS『2h 刷新』)。"""
+    import calendar
+    import re as _re
+    m = _re.search(r"(\d{8})\.(\d{4})", os.path.basename(url))
+    if not m:
+        return None
+    try:
+        return calendar.timegm(time.strptime(m.group(1) + m.group(2), "%Y%m%d%H%M"))
+    except Exception:
+        return None
+
+
+def _parse_to_csv(mrt_file: str, collector: str, family: Optional[int],
+                  limit: Optional[int]) -> tuple[str, int, int]:
+    """解析单个 collector 的 RIB 本地文件, 把去重后的 (prefix,path) 行写到临时 CSV。
+    返回 (csv_path, 前缀数, obs 行数)。**不碰 DuckDB**(store 仅在函数内 import duckdb),
+    故可在子进程里与其它采集点并行跑(纯 Python CPU bound, 用进程绕开 GIL)。
 
     去重在 Python 端按 (prefix, path_raw) 做(含 prepend; 同 collector 内 n_peers=观测此 path 的 peer 数);
     跨 collector 的合并留给 store.finalize()。
@@ -351,6 +367,9 @@ def _ingest_one(con, mrt_file: str, collector: str, keep_pred,
     def progress(scanned: int, kept: int):
         rate = scanned / max(time.time() - t0, 1e-6)
         util.log(f"  [{collector}] 扫描 {util.human(scanned)} 前缀, 命中 {kept} ({util.human(rate)}/s)")
+
+    def keep_pred(start: int, end: int, fam: int) -> bool:
+        return (family is None) or (fam == family)
 
     w = store.ObsWriter(collector)
     n_prefix = n_rows = 0
@@ -380,10 +399,16 @@ def _ingest_one(con, mrt_file: str, collector: str, keep_pred,
             n_rows += 1
         n_prefix += 1
     w.close()
-    util.log(f"  [{collector}] 灌入 obs: {n_prefix} 前缀 / {n_rows} 去重路径行")
-    store.load_csv(con, w.path)
-    os.remove(w.path)
-    return n_prefix, n_rows
+    util.log(f"  [{collector}] 解析完成: {n_prefix} 前缀 / {n_rows} 去重路径行 -> {os.path.basename(w.path)}")
+    return w.path, n_prefix, n_rows
+
+
+def _download_and_parse(collector: str, url: str, dest: str,
+                        family: Optional[int], limit: Optional[int]) -> tuple[str, str, int, int]:
+    """子进程任务: 下载 + 解析 -> CSV。返回 (collector, csv_path, 前缀数, obs 行数)。不碰 DuckDB。"""
+    mf = download(url, dest=dest)
+    csv_path, n_prefix, n_rows = _parse_to_csv(mf, collector, family, limit)
+    return collector, csv_path, n_prefix, n_rows
 
 
 def ingest(
@@ -394,11 +419,14 @@ def ingest(
     reset: bool = False,
     limit: Optional[int] = None,
     family: Optional[int] = None,
+    only: Optional[list[str]] = None,
     **_legacy,
 ) -> dict:
     """下载并解析各采集点 RIB, 入 DuckDB 工作库(obs), 末尾 finalize 出 pathobs/prefix。
 
     family: 4 / 6 / None(两者都收)。`mrt_file` 给定时只解析该本地文件(用首个 collector 作标签, 调试用)。
+    only:  仅重灌列出的采集点(其余 obs 原样保留, finalize 仍是全量合并) —— **按采集点增量刷新**,
+           用于发布周期短的采集点(如 route-views2 每 2h)单独高频刷新; 需先有一次全量 ingest 打底。
     """
     util.ensure_dirs()
     store.init_schema(con)
@@ -427,46 +455,90 @@ def ingest(
     else:
         util.log("  geo: profile 已关闭(无地理), 跳过 GeoLite/geo 构建")
 
-    def keep_pred(start: int, end: int, fam: int) -> bool:
-        return (family is None) or (fam == family)
-
     util.log(f"  入库口径: 全表(v4+v6); family={'全部' if family is None else 'v'+str(family)}; "
              f"采集点={collectors(cfg) if mrt_file is None else '本地文件'}")
 
-    total_prefix = total_rows = 0
+    # --only: 按采集点增量刷新 —— 仅重灌指定采集点, 其余 obs 原样保留(finalize 仍全量合并)。
+    only_set: Optional[list[str]] = None
+    if only:
+        if reset:
+            raise RuntimeError("--only 与 --reset 互斥(增量刷新不应清全表)")
+        if mrt_file is not None or url is not None:
+            raise RuntimeError("--only 仅用于下载最新 RIB 的增量刷新, 不能与 --mrt-file/--url 同用")
+        configured = collectors(cfg)
+        cfgset = set(configured)
+        bad = [c for c in only if c not in cfgset]
+        if bad:
+            raise RuntimeError(f"--only 含未配置采集点 {bad}; 当前配置={configured}")
+        only_set = [c for c in configured if c in set(only)]   # 保持配置顺序
+        has_obs = con.execute(
+            "SELECT count(*) FROM information_schema.tables WHERE table_name='obs'").fetchone()[0]
+        if not has_obs or con.execute("SELECT count(*) FROM obs").fetchone()[0] == 0:
+            raise RuntimeError("obs 为空: --only 增量刷新需先跑一次全量 ingest 打底")
+        ph = ",".join("?" for _ in only_set)
+        con.execute(f"DELETE FROM obs WHERE collector IN ({ph})", only_set)
+        util.log(f"  --only {only_set}: 删除这些采集点旧 obs, 其余保留, 仅重灌这些点")
+
+    # 1) 解析任务清单: (collector, url, dest)。url=None 表示直接用本地文件(dest 即文件路径, 不下载)。
+    #    各采集点 bview 文件名相同(bview.<date>.<time>.gz) -> 缓存路径必须按 collector 命名, 否则互相覆盖。
+    tasks: list[tuple[str, Optional[str], str]] = []
     if mrt_file is not None:
         coll = (collectors(cfg) or ["local"])[0]
         store.set_meta(con, "mrt_file", mrt_file)
-        p, r = _ingest_one(con, mrt_file, coll, keep_pred, limit)
-        total_prefix += p; total_rows += r
+        tasks.append((coll, None, mrt_file))
+    elif url is not None:                          # 显式单 URL -> 用首个 collector 标签
+        coll = (collectors(cfg)[:1] or ["rrc01"])[0]
+        tasks.append((coll, url, str(util.MRT_CACHE_DIR / f"{coll}-{os.path.basename(url)}")))
+    elif cfg.get("mrt_layout") == "dn42":
+        # dn42 GRC: 直接取 master4/6_latest.mrt.bz2(无月份目录, bz2)。family 决定取哪个文件。
+        base = cfg["mrt_base_url"].rstrip("/")
+        label = (collectors(cfg) or ["mrt42"])[0]
+        for fam_u in ([4] if family == 4 else [6] if family == 6 else [4, 6]):
+            u = f"{base}/master{fam_u}_latest.mrt.bz2"
+            util.log(f"  [{label}] dn42 RIB: {u}")
+            tasks.append((label, u, str(util.MRT_CACHE_DIR / f"{label}-master{fam_u}_latest.mrt.bz2")))
     else:
-        urls = []
-        coll_list = collectors(cfg)
-        if url is not None:                       # 显式单 URL -> 用首个 collector 标签
-            coll_list = coll_list[:1] or ["rrc01"]
-            urls = [(coll_list[0], url)]
-        elif cfg.get("mrt_layout") == "dn42":
-            # dn42 GRC: 直接取 master4/6_latest.mrt.bz2(无月份目录, bz2)。family 决定取哪个文件。
-            base = cfg["mrt_base_url"].rstrip("/")
-            label = (coll_list or ["mrt42"])[0]
-            if family in (None, 4):
-                urls.append((label, f"{base}/master4_latest.mrt.bz2"))
-            if family in (None, 6):
-                urls.append((label, f"{base}/master6_latest.mrt.bz2"))
-            for _, u in urls:
-                util.log(f"  [{label}] dn42 RIB: {u}")
-        else:
-            for c in coll_list:
-                u = latest_bview_url(cfg, c)
-                util.log(f"  [{c}] 最新 RIB: {u}")
-                urls.append((c, u))
-        for c, u in urls:
-            # 各采集点的 bview 文件名相同(bview.<date>.<time>.gz) -> 缓存路径必须按 collector 命名, 否则互相覆盖。
-            dest = str(util.MRT_CACHE_DIR / f"{c}-{os.path.basename(u)}")
-            mf = download(u, dest=dest)
-            store.set_meta(con, f"mrt_url_{c}", u)
-            p, r = _ingest_one(con, mf, c, keep_pred, limit)
-            total_prefix += p; total_rows += r
+        for c in (only_set or collectors(cfg)):
+            u = latest_bview_url(cfg, c)
+            util.log(f"  [{c}] 最新 RIB: {u}")
+            tasks.append((c, u, str(util.MRT_CACHE_DIR / f"{c}-{os.path.basename(u)}")))
+
+    # 2) 解析(下载+解析+写 CSV)。多任务时按采集点并行(进程绕开 GIL); 子进程不碰 DuckDB, fork 安全。
+    #    CSV 由父进程**串行**灌库(单 DuckDB 连接)。
+    total_prefix = total_rows = 0
+
+    def _load(collector: str, u: Optional[str], csv_path: str, n_prefix: int, n_rows: int) -> None:
+        nonlocal total_prefix, total_rows
+        store.load_csv(con, csv_path)
+        os.remove(csv_path)
+        total_prefix += n_prefix; total_rows += n_rows
+        if u is not None:
+            store.set_meta(con, f"mrt_url_{collector}", u)
+            snap = _snap_ts(u)
+            if snap:
+                store.set_meta(con, f"mrt_snap_{collector}", snap)   # 该采集点数据的真实快照时刻(UTC epoch)
+        store.set_meta(con, f"ingest_ts_{collector}", now)            # 本机灌入此采集点的时刻
+
+    if len(tasks) <= 1:
+        for c, u, dest in tasks:
+            mf = download(u, dest=dest) if u is not None else dest
+            csv_path, p, r = _parse_to_csv(mf, c, family, limit)
+            _load(c, u, csv_path, p, r)
+    else:
+        import multiprocessing
+        from concurrent.futures import ProcessPoolExecutor, as_completed
+        nw = min(len(tasks), max(1, (os.cpu_count() or 4)))
+        util.log(f"  并行解析 {len(tasks)} 个采集点(workers={nw})")
+        # 显式用 fork: Py3.14 起默认 forkserver/spawn 会**重导入入口模块**(子进程跑别的命令)且不继承
+        #   monkeypatch; fork 直接复制内存(子进程纯 Python 解析, 不碰 DuckDB 连接), 简单且日志时间戳连续。
+        with ProcessPoolExecutor(max_workers=nw,
+                                 mp_context=multiprocessing.get_context("fork")) as ex:
+            futs = {ex.submit(_download_and_parse, c, u, dest, family, limit): u
+                    for c, u, dest in tasks}
+            for fut in as_completed(futs):
+                u = futs[fut]
+                collector, csv_path, p, r = fut.result()
+                _load(collector, u, csv_path, p, r)
 
     fin = store.finalize(con)
     store.set_meta(con, "ingest_ts", now)
