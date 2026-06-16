@@ -35,7 +35,7 @@
     proto: _set.proto ?? 'icmp', port: _set.port ?? 443, packets: _set.packets ?? 3,
   })
   let geoSource = $state(_set.geoSource ?? 'nexttrace')   // GeoIP 数据源: NextTrace(经 worker, 免 token) / 内置
-  let map2d = $state(_set.map2d ?? false)                 // 2D(墨卡托)/3D 切换(右下角, 粒子形变转场)
+  let map2d = $state(_set.map2d ?? (typeof window !== 'undefined' && window.innerWidth <= 820))   // 2D(墨卡托)/3D 切换(右下角); 移动端默认 2D, 桌面默认 3D(无存档时)
   let globeCtrl = null                                    // TraceGlobe 引擎句柄(复位按钮用)
   let famLabel = $derived(mtr.family === '4' ? 'IPv4' : mtr.family === '6' ? 'IPv6' : 'AUTO')
   // 各类型可用项(对齐 globalping spec): ping 协议仅 ICMP/TCP; trace/mtr 加 UDP。
@@ -196,7 +196,7 @@
   let history = $state(loadHistory())
   let dropOpen = $state(false)
   let hi = $state(-1)                    // 下拉里高亮项的下标
-  let dropRect = $state({ left: 0, top: 0, width: 0 })
+  let dropRect = $state({ left: 0, top: 0, bottom: 0, width: 0, up: false })
   function loadHistory() { try { return JSON.parse(localStorage.getItem(HKEY) || '[]').filter(x => typeof x === 'string') } catch { return [] } }
   function saveHistory() { try { localStorage.setItem(HKEY, JSON.stringify(history.slice(0, 16))) } catch { /* 隐私模式忽略 */ } }
   function addHistory(tg) { history = [tg, ...history.filter(x => x !== tg)].slice(0, 16); saveHistory() }
@@ -206,7 +206,13 @@
     const qq = box.trim().toLowerCase()
     return history.filter(h => { const l = h.toLowerCase(); return qq ? (l.includes(qq) && l !== qq) : true }).slice(0, 8)
   })
-  function measureDrop() { if (inputEl) { const r = inputEl.getBoundingClientRect(); dropRect = { left: r.left, top: r.bottom + 6, width: r.width } } }
+  function measureDrop() {
+    if (!inputEl) return
+    const r = inputEl.getBoundingClientRect()
+    // 移动端面板贴底、输入在底部 → 历史下拉改为向上展开(否则落到屏幕外)
+    const up = window.innerWidth <= 820
+    dropRect = { left: r.left, top: r.bottom + 6, bottom: window.innerHeight - r.top + 6, width: r.width, up }
+  }
   function openDrop() { measureDrop(); dropOpen = true; hi = -1 }
   function onKey(e) {
     if (e.key === 'Enter') { e.preventDefault(); if (dropOpen && hi >= 0 && matches[hi]) pickHistory(matches[hi]); else submit(e); return }
@@ -231,6 +237,7 @@
   let gesture = null
   const clampN = (v, a, b) => v < a ? a : v > b ? b : v
   function startMove(e) {
+    if (window.innerWidth <= 820) return                  // 移动端: 面板锁定在底部, 不可拖动
     if (e.button != null && e.button !== 0) return
     // 整块面板可拖, 但放过交互区域(输入/按钮/结果列表/监测点网格/缩放角)
     if (e.target.closest && e.target.closest('input, button, textarea, a, select, .console, .results, .suggest, .chips, .settings, .grip')) return
@@ -240,6 +247,7 @@
     e.preventDefault()
   }
   function startResize(e) {
+    if (window.innerWidth <= 820) return                  // 移动端: 不提供缩放
     const r = panelEl.getBoundingClientRect()
     winDrag = true; win.w = r.width; win.h = r.height; dropOpen = false   // 起手先固定当前尺寸
     gesture = { mode: 'resize', sx: e.clientX, sy: e.clientY, ow: r.width, oh: r.height }
@@ -741,7 +749,8 @@
 
   <!-- 历史下拉(渲染在面板外, 避开浮窗 overflow/backdrop-filter 裁切; 位置由输入框实时测得) -->
   {#if dropOpen && matches.length}
-    <ul class="hist" id="rt-hist" style:left="{dropRect.left}px" style:top="{dropRect.top}px" style:width="{dropRect.width}px">
+    <ul class="hist" id="rt-hist" style:left="{dropRect.left}px" style:width="{dropRect.width}px"
+        style:top={dropRect.up ? null : dropRect.top + 'px'} style:bottom={dropRect.up ? dropRect.bottom + 'px' : null}>
       <div class="histscroll">
         {#each matches as h, i (h)}
           <li class="histrow" class:hl={i === hi}>
@@ -1214,5 +1223,24 @@
   /* 窄屏: 浮窗背景更实, 地球退作背景 */
   @container (max-width: 900px) {
     .panel { background: color-mix(in srgb, var(--panel) 92%, transparent); }
+  }
+
+  /* 移动端: 面板锁定在底部、不可拖动/缩放; 反转布局让输入在底、结果向上展开 */
+  @media (max-width: 820px) {
+    .panel {
+      left: 0 !important; right: 0 !important; top: auto !important; bottom: 0;
+      width: auto !important; height: auto !important;
+      flex-direction: column-reverse;                 /* 输入在底, 工具/结果向上展开 */
+      border-radius: 16px 16px 0 0;                    /* 贴底, 仅上缘圆角 */
+      max-height: calc(100dvh - 12px); cursor: default;
+      padding: 12px 14px calc(14px + env(safe-area-inset-bottom, 0px));
+    }
+    .panel.dragging { user-select: auto; }
+    .draghandle, .grip { display: none !important; }   /* 去掉拖动手柄与缩放角 */
+    /* 地球控制(复位 + 2D/3D)移到左上, 避开底部面板与右上角菜单钮 */
+    .projctl {
+      left: calc(12px + env(safe-area-inset-left, 0px)); right: auto;
+      top: calc(10px + env(safe-area-inset-top, 0px)); bottom: auto;
+    }
   }
 </style>

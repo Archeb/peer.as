@@ -1,15 +1,14 @@
 <script>
-  // 移动端专用顶栏: 左=项目 logo, 右=下拉菜单(桌面侧栏的统计/链接/语言/主题/关于/更新日志)。
-  // 仅在窄屏显示(CSS @media); 桌面侧栏在窄屏隐藏。
+  // 移动端菜单: 右上角悬浮按钮 + 下拉(桌面侧栏的视图导航/统计/链接/语言/主题/关于/更新日志)。
+  // 不再占用整条顶栏(省空间); 仅在窄屏显示(CSS @media), 桌面用侧栏。
   import Fa from 'svelte-fa'
   import { S } from '../lib/store.svelte.js'
   import { t } from '../lib/i18n.js'
   import { cycleTheme, toggleLang } from '../lib/ui.js'
-  import { setView, goHome, openProbe, openTrace } from '../lib/queries.js'
+  import { setView, openProbe, openTrace } from '../lib/queries.js'
   import { genAgo, genUtc } from '../lib/clock.svelte.js'
   import { iMenu, iClose, iPrefix, iPath, iGlobal, iClock, iTheme, iLang, iAbout, iRepo, iIssue, iChangelog, iNodes, iWhois, iProbe, iSatellite } from '../lib/icons.js'
-  import { brand, features } from '../lib/site.js'
-  import logoBa from '../assets/peeras-ba.png'
+  import { features } from '../lib/site.js'
 
   let counts = $derived(S.meta?.counts || {})
   let nCountry = $derived((S.meta?.countries || []).length)
@@ -19,14 +18,10 @@
   const openModal = k => { S.menu = false; S[k] = true }
 </script>
 
-<header class="mbar">
-  <button class="logo" class:img={S.theme === 'ba'} onclick={() => { S.menu = false; goHome() }} aria-label={t('home')}>
-    {#if S.theme === 'ba'}<img class="logo-img" src={logoBa} alt="{brand.main}{brand.hi}" />{:else}<span class="dot"></span>{brand.main}<span class="hi">{brand.hi}</span>{/if}
-  </button>
-  <button class="menubtn" onclick={() => (S.menu = !S.menu)} aria-label={t('menu')} aria-expanded={S.menu}>
-    <Fa icon={S.menu ? iClose : iMenu} />
-  </button>
-</header>
+<!-- 移动端不再占用一条顶栏: 仅右上角悬浮一个菜单按钮(logo/状态栏已去除以省空间) -->
+<button class="menubtn" onclick={() => (S.menu = !S.menu)} aria-label={t('menu')} aria-expanded={S.menu}>
+  <Fa icon={S.menu ? iClose : iMenu} />
+</button>
 
 {#if S.menu}
   <div class="scrim" onclick={close} role="presentation"></div>
@@ -75,33 +70,25 @@
 
 <style>
   /* 默认隐藏(桌面用侧栏); 仅窄屏显示 */
-  .mbar { display: none; }
+  .menubtn { display: none; }
 
   @media (max-width: 820px) {
-    .mbar {
-      display: flex; align-items: center; justify-content: space-between;
-      position: sticky; top: 0; z-index: 8;
-      /* 顶部 + 左右安全区: 横屏刘海/状态栏不遮 logo 与菜单钮 */
-      padding: calc(10px + env(safe-area-inset-top, 0px)) calc(14px + env(safe-area-inset-right, 0px)) 10px calc(14px + env(safe-area-inset-left, 0px));
-      /* 配色跟随主题(明/暗), 与桌面侧栏同一套 token */
-      background: linear-gradient(180deg, var(--panel), var(--bg)); border-bottom: 1px solid var(--line);
-    }
-    .logo { font: 800 17px/1 var(--mono); letter-spacing: -.01em; color: var(--fg); display: flex; align-items: center; background: none; border: 0; padding: 0; cursor: pointer; }
-    .logo .hi { color: var(--accent); }
-    .logo .dot { display: none; }   /* 移动端不显示状态点 */
-    .logo.img { padding: 0; }
-    .logo .logo-img { display: block; height: 26px; width: auto; max-width: 150px; object-fit: contain; }
+    /* 不再有整条顶栏, 菜单按钮悬浮在右上角(顶部 + 右侧安全区避刘海) */
     .menubtn {
       display: inline-flex; align-items: center; justify-content: center; width: 38px; height: 38px;
-      background: transparent; border: 1px solid var(--line); border-radius: 8px; color: var(--fg);
+      position: fixed; z-index: 11;
+      top: calc(10px + env(safe-area-inset-top, 0px));   /* 与路由分析首行输入框(38px, 顶距 10px)对齐 */
+      right: calc(14px + env(safe-area-inset-right, 0px));
+      background: var(--panel); border: 1px solid var(--line); border-radius: 8px; color: var(--fg);
       font-size: 16px; cursor: pointer;
+      -webkit-tap-highlight-color: transparent;
     }
     .menubtn:active { background: var(--alt); }
 
     .scrim { position: fixed; inset: 0; z-index: 9; background: rgba(2, 6, 14, .5); }
     .menu {
       position: fixed;
-      top: calc(58px + env(safe-area-inset-top, 0px));
+      top: calc(56px + env(safe-area-inset-top, 0px));
       right: calc(10px + env(safe-area-inset-right, 0px)); left: calc(10px + env(safe-area-inset-left, 0px)); z-index: 10;
       background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
       box-shadow: 0 20px 60px rgba(0, 0, 0, .5); padding: 14px 16px;

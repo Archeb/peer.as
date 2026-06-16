@@ -23,6 +23,9 @@
   const FAM = [{ v: 'all', label: () => t('fam_all') }, { v: '4', label: () => 'IPv4' }, { v: '6', label: () => 'IPv6' }]
   let famIdx = $derived(Math.max(0, FAM.findIndex(o => o.v === (f.fam || 'all'))))
   function setFam(v) { f.fam = v; if (!pathNA) searchNow() }
+  // 移动端: 用单按钮点击轮换地址族(ALL → IPv4 → IPv6 → …), 省掉三段控件的横向空间
+  let famLabel = $derived((f.fam || 'all') === '4' ? 'IPv4' : (f.fam || 'all') === '6' ? 'IPv6' : t('fam_all'))
+  function cycleFam() { setFam(FAM[(famIdx + 1) % FAM.length].v) }
   // 不再随输入自动搜索: 仅回车(onenter)或点击「搜索」触发。离散控件(family 段、复选)点击即搜。
   function clearAll() {
     Object.assign(f, { cc: '', city: '', person: '', path: '', origin: '', ip: '', limit: 500, incllow: false, fam: 'all' })
@@ -42,6 +45,9 @@
             title={t('fam_label')} onclick={() => setFam(o.v)}>{o.label()}</button>
         {/each}
       </div>
+      <!-- 移动端: 单按钮轮换地址族(替代上面的三段控件, 由 CSS 互斥显隐) -->
+      <button type="button" class="fammob" class:act={(f.fam || 'all') !== 'all'} disabled={pathNA}
+        title={t('fam_label')} aria-label={t('fam_label')} onclick={cycleFam}>{famLabel}</button>
       <Field icon={iSubnet} bind:value={f.ip} placeholder={t('ph_ip')} big grow width=""
         onenter={searchNow} />
       <!-- ≤410px: 强制换行, 让搜索/WHOIS/清空整体落到第二行(否则窄屏精确框会被挤到自己一行, 破坏布局) -->
@@ -141,6 +147,16 @@
   .famseg .famopt.on { color: var(--accent-fg); }
   .famseg .famopt:not(.on):hover { color: var(--fg); }
   .famseg.disabled { opacity: .45; pointer-events: none; }
+  /* 移动端单按钮地址族(默认隐藏, 桌面用上面的三段控件) */
+  .fammob {
+    display: none; flex: 0 0 auto; align-items: center; justify-content: center;
+    height: 40px; min-width: 52px; padding: 0 12px; border-radius: 9px; cursor: pointer;
+    background: var(--inbg); border: 1px solid var(--line); color: var(--muted);
+    font: 700 12px var(--sans); letter-spacing: .01em; white-space: nowrap; transition: all .14s;
+  }
+  .fammob:hover { color: var(--fg); border-color: var(--accent); }
+  .fammob.act { background: var(--accent-dim); border-color: color-mix(in srgb, var(--accent) 40%, transparent); color: var(--accent); }
+  .fammob:disabled { opacity: .45; pointer-events: none; }
   .clrbtn {
     display: inline-flex; align-items: center; justify-content: center; height: 40px; width: 40px;
     flex: 0 0 auto; background: transparent; border: 1px solid var(--line); border-radius: 9px;
@@ -211,12 +227,20 @@
   }
   @media (max-width: 820px) {
     .topbar { padding: 10px 12px; }
+    /* 三段地址族控件换成单按钮(省空间) */
+    .famseg { display: none; }
+    .fammob { display: inline-flex; }
+    /* 换行后两行更紧凑(行距 6px, 列距仍 9px) */
+    .row.primary { gap: 6px 9px; }
+    /* 首行控件统一 38px 高, 与右上角悬浮菜单钮(38px)对齐 */
+    .row.primary :global(.field) { height: 38px !important; }
+    .row.primary .fammob, .row.primary .gobtn.big, .row.primary .clrbtn { height: 38px; }
     /* 次要筛选行: 两列自适应 */
     .row.secondary :global(.field) { flex: 1 1 calc(50% - 9px); width: auto !important; }
-    /* 主查询行 第1行: 全部/v4/v6 分段 + 主搜索框 同行
+    /* 主查询行 第1行: 地址族 + 主搜索框 同行(搜索框右侧留出悬浮菜单钮的位置, 仅本行退避)
        第2行: 搜索(占满剩余空间, 内容居中) + WHOIS(自适应内容) + 清空(固定) */
     .row.primary .famseg { flex: 0 0 auto; }
-    .row.primary :global(.field) { flex: 1 1 50%; width: auto !important; }
+    .row.primary :global(.field) { flex: 1 1 50%; width: auto !important; margin-right: calc(49px + env(safe-area-inset-right, 0px)); }
     .row.primary .gobtn.big:not(.whoisbtn) { flex: 1 1 auto; justify-content: center; }  /* 搜索撑满剩余 */
     .row.primary .whoisbtn { display: inline-flex; flex: 0 0 auto; }        /* WHOIS 自适应 */
     .row.primary .clrbtn { flex: 0 0 auto; }                               /* 清空固定 */
