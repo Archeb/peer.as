@@ -46,6 +46,9 @@ PATH_CAP = 128  # 每前缀导出的去重 AS_PATH 上限(按 path_len ASC, n_pe
                 # 注: 这是**会生效的截顶杠杆** —— 再加采集点冲破 128 时此处会静默丢尾, 届时要么提 cap 要么记 log。
                 # (24 旧值会截断 ~93% 前缀的路径列表/路由图/AS_PATH 搜索, 掩盖多采集点的路径多样性)。
 FILE_SIZE = "16MB"
+# geo 按国家分目录写; 大国(US)单分片会逼近/越过 CF Pages 25MiB/文件硬限(FILE_SIZE_BYTES 只是近似,
+# 实测 16MB 目标 → 25.2MB 实际)。故 geo carve 用更小目标, 留足余量(目标 8MB → 实际 ~13-17MB)。
+GEO_FILE_SIZE = "8MB"
 PATHSEARCH_FILE_SIZE = "6MB"
 # prefixes 切得更细 + 每文件 [min ip_start, max ip_end] 区间索引(prefixes_ip), 让精确 IP/子网查询
 # 只读区间相交的那 1 个小文件(其余整文件跳过), 而非整套 ~24MB。约 2MB 分片 -> 实测单 IP 查 ~2MB(降 ~12x)。
@@ -218,7 +221,7 @@ def _carve_geo_dirs(con, cfg: dict, pq: Path, family: int, suffix: str, geodir: 
     for cc in ccs:
         con.execute(f"""
             COPY (SELECT * FROM geo_full WHERE cc='{cc}' ORDER BY city NULLS FIRST, n_paths DESC)
-            TO '{pq}/{geodir}/{cc}' (FORMAT parquet, FILE_SIZE_BYTES '{FILE_SIZE}',
+            TO '{pq}/{geodir}/{cc}' (FORMAT parquet, FILE_SIZE_BYTES '{GEO_FILE_SIZE}',
                   ROW_GROUP_SIZE 15000, OVERWRITE_OR_IGNORE);
         """)
     return ccs, len(segs)
