@@ -106,8 +106,8 @@
   .metrics { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-bottom: 18px; }
   .metric {
     display: flex; flex-direction: column; gap: 5px; min-width: 0;
-    padding: 11px 13px; border: 1px solid var(--line); border-radius: 8px;
-    background: color-mix(in srgb, var(--alt) 55%, transparent);
+    padding: 11px 13px; border-radius: 8px;
+    background: color-mix(in srgb, var(--alt) 75%, transparent);
   }
   .mk {
     display: inline-flex; align-items: center; gap: 7px; min-width: 0;
