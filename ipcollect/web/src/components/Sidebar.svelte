@@ -5,7 +5,7 @@
   import { cycleTheme, toggleLang } from '../lib/ui.js'
   import { setView, goHome, openProbe, openTrace } from '../lib/queries.js'
   import { genAgo, genUtc } from '../lib/clock.svelte.js'
-  import { iPrefix, iPath, iGlobal, iClock, iTheme, iLang, iAbout, iRepo, iIssue, iChangelog, iNodes, iWhois, iProbe, iClose, iSatellite } from '../lib/icons.js'
+  import { iPrefix, iPath, iGlobal, iClock, iTheme, iLang, iAbout, iRepo, iIssue, iChangelog, iNodes, iWhois, iProbe, iClose, iSatellite, iLink } from '../lib/icons.js'
   import { brand, features } from '../lib/site.js'
   import logoBa from '../assets/peeras-ba.png'
 
@@ -65,6 +65,18 @@
   </section>
 
   <div class="foot">
+    <nav class="links friendlinks" aria-label={t('friends')}>
+      <span class="friendhd">{t('friends')}</span>
+      <a class="lnk" href="https://www.nxtrace.org/" target="_blank" rel="noopener noreferrer">
+        <Fa icon={iLink} /> NextTrace
+      </a>
+      <a class="lnk" href="https://opentrace.app/" target="_blank" rel="noopener noreferrer">
+        <Fa icon={iLink} /> OpenTrace
+      </a>
+      <a class="lnk" href="https://nt.u1.pw/" target="_blank" rel="noopener noreferrer">
+        <Fa icon={iLink} /> Network Test
+      </a>
+    </nav>
     <nav class="links">
       <a class="lnk" href="https://github.com/Archeb/peer.as" target="_blank" rel="noopener noreferrer">
         <Fa icon={iRepo} /> {t('src_home')}
@@ -179,6 +191,9 @@
   .lnk :global(svg) { color: var(--muted); width: 12px; transition: color .15s; }
   .lnk:hover, .lnk:hover :global(svg) { color: var(--accent); }
   .lnkbtn { background: transparent; border: 0; cursor: pointer; text-align: left; font-family: var(--sans); }
+  /* 友情链接: 置于 links 最上方, 自身不画分割线(顶部) */
+  .friendlinks { border-top: 0; padding-top: 0; }
+  .friendhd { font: 700 9.5px var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); opacity: .7; padding: 0 2px 2px; }
   .ctl { display: flex; gap: 6px; }
   .ctl .ghost {
     flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 6px;
