@@ -427,7 +427,21 @@ def build_geo(con, cfg: dict, geolite: Optional[dict] = None) -> dict:
         r.close()
         con.execute("DROP TABLE IF EXISTS asn_dim;")
         con.execute("CREATE TABLE asn_dim(asn BIGINT, org VARCHAR);")
-        con.executemany("INSERT INTO asn_dim VALUES (?,?)", list(orgs.items()))
+        # CSV + read_csv 灌入: executemany 8万行实测 ~400s(逐行事务), read_csv ~0.2s
+        # (同 obs/geo_raw 的快路径; org 名可能含逗号/引号 -> csv.writer 引号 + read_csv 默认 RFC4180 解析)。
+        if orgs:
+            asn_csv = os.path.join(tmp, f"asn_{os.getpid()}.csv")
+            with open(asn_csv, "w", newline="", encoding="utf-8") as af:
+                aw = csv.writer(af)
+                for a, o in orgs.items():
+                    aw.writerow((a, o))
+            con.execute(f"""
+                INSERT INTO asn_dim
+                SELECT column0::BIGINT, column1 FROM read_csv('{asn_csv}',
+                    header=false, auto_detect=false,
+                    columns={{'column0':'VARCHAR','column1':'VARCHAR'}});
+            """)
+            os.remove(asn_csv)
         n_asn = len(orgs)
 
     util.log(f"  geo 完成: {n_geo} 段(非重叠), country_dim={len(rows)}, asn_dim={n_asn}")
