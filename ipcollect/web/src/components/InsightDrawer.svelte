@@ -46,9 +46,11 @@
     if (px) holderOrg(px).then(h => { if (S.insight?.prefix === px && h) holder = h })
   })
 
+  const isMobile = () => typeof window !== 'undefined' && window.matchMedia && window.matchMedia('(max-width: 820px)').matches
+
   // 关闭: 移动端直接全关; 桌面端沿用智能关闭(看 prefix 且主体是 ASN 时先返回 ASN)。
   function onClose() {
-    if (typeof window !== 'undefined' && window.matchMedia && window.matchMedia('(max-width: 820px)').matches) hardCloseDetail()
+    if (isMobile()) hardCloseDetail()
     else closeInsight()
   }
 
@@ -66,11 +68,13 @@
     }
   })
   function startFMove(e) {
+    if (isMobile()) return                          // 移动端: 浮窗锁全屏, 不可拖动
     if (e.target.closest && e.target.closest('button, a, input, .fgrip')) return
     fges = { mode: 'move', sx: e.clientX, sy: e.clientY, ox: fwin.x, oy: fwin.y }
     window.addEventListener('pointermove', onFges); window.addEventListener('pointerup', endFges); e.preventDefault()
   }
   function startFResize(e) {
+    if (isMobile()) return                          // 移动端: 全屏, 不提供缩放
     const r = fEl.getBoundingClientRect(); fwin.w = r.width; fwin.h = r.height
     fges = { mode: 'resize', sx: e.clientX, sy: e.clientY, ow: r.width, oh: r.height }
     window.addEventListener('pointermove', onFges); window.addEventListener('pointerup', endFges); e.preventDefault(); e.stopPropagation()
@@ -209,6 +213,11 @@
          style:left="{fwin.x}px" style:top="{fwin.y}px" style:width="{fwin.w}px" style:height="{fwin.h}px">
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <div class="fbar" onpointerdown={startFMove}>
+        <!-- 左上角: 后退 / 前进 导航(stopPropagation 不触发拖动) -->
+        <div class="fnav" onpointerdown={(e) => e.stopPropagation()}>
+          <button class="fnavb" disabled={!canBack} onclick={navBack} title={t('nav_back')} aria-label={t('nav_back')}><Fa icon={iArrowL} /></button>
+          <button class="fnavb" disabled={!canFwd} onclick={navForward} title={t('nav_fwd')} aria-label={t('nav_fwd')}><Fa icon={iArrowR} /></button>
+        </div>
         <span class="fhandle" aria-hidden="true"><i></i><i></i></span>
         <button class="fclose" onpointerdown={(e) => e.stopPropagation()} onclick={() => onclose && onclose()} title={t('detail_close')} aria-label={t('detail_close')}><Fa icon={iClose} /></button>
       </div>
@@ -250,6 +259,11 @@
   .fhandle { display: flex; flex-direction: column; align-items: center; gap: 3px; }
   .fhandle i { width: 30px; height: 2px; border-radius: 2px; background: color-mix(in srgb, var(--muted) 42%, transparent); transition: background .15s; }
   .floatwin:hover .fhandle i { background: color-mix(in srgb, var(--muted) 65%, transparent); }
+  .fnav { position: absolute; left: 6px; top: 50%; transform: translateY(-50%); display: inline-flex; align-items: center; gap: 2px; }
+  .fnavb { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; border-radius: 7px; background: transparent; border: 0; color: var(--muted); cursor: pointer; transition: all .12s; }
+  .fnavb:hover:not(:disabled) { color: var(--fg); background: var(--alt); }
+  .fnavb:disabled { opacity: .3; cursor: default; }
+  .fnavb :global(svg) { width: 11px; }
   .fclose { position: absolute; right: 6px; top: 50%; transform: translateY(-50%); display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; border-radius: 7px; background: transparent; border: 0; color: var(--muted); cursor: pointer; transition: all .12s; }
   .fclose:hover { color: #ef4444; background: var(--alt); }
   .fclose :global(svg) { width: 11px; }
@@ -328,6 +342,11 @@
   table.paths tr.hit { background: var(--hit); }
   .star { color: var(--signal); }
   @media (max-width: 820px) {
+    /* 浮窗模式: 自动全屏, 不可拖动/缩放 */
+    .floatwin { inset: 0 !important; width: auto !important; height: auto !important; border: 0; border-radius: 0; }
+    .fbar { cursor: default; }
+    .fgrip { display: none; }
+    .dbody.floatbody { padding: 8px 18px 84px; }
     .detail { position: fixed; inset: 0; width: 100% !important; flex-basis: 100% !important; z-index: 40; }
     .dragbar { display: none; }
     /* 标题下移一点, 避免顶到右上浮岛 */
