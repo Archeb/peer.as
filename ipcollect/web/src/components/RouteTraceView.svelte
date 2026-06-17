@@ -1268,6 +1268,8 @@
     /* HUD 抬到 menubtn(z11)/projctl(z4) 之上, 让展开的面板能盖住它们(.rtv 是 container 即栈上下文,
        app 级弹窗在 .rtv 之外故仍在面板之上)。面板留白处 pointer-events:none → 未盖住时菜单钮照常可点。 */
     .hud { z-index: 20; }
+    /* 历史下拉向上展开会落进面板区域: 须抬到 .hud(z20) 之上, 否则被底部面板自身盖住 */
+    .hist { z-index: 21; }
     .rcollapse { display: inline-flex; }   /* 一键收起/展开全部, 仅移动端 rhead 显示 */
     .panel {
       left: 0 !important; right: 0 !important; top: auto !important; bottom: 0;
