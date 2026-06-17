@@ -43,6 +43,8 @@ function pickLang(url, request) {
   return 'en'   // 无信号默认 en(与 sitemap x-default 一致)
 }
 function brandOf(host) { return host && host.includes('dn42') ? BRANDS.dn42 : BRANDS.peeras }
+// canonical/hreflang/og 永远用品牌域(非服务主机) -> *.pages.dev / cn 镜像不会被当独立站收录。
+function canonicalHost(host) { return host && host.includes('dn42') ? 'dn42.peer.as' : 'peer.as' }
 
 function matchRoute(pathname) {
   const p = pathname.replace(/\/+$/, '') || '/'
@@ -80,18 +82,13 @@ async function renderRoute(r, lang, brand, env, base) {
   return null
 }
 
-// 注入到 index.html 外壳。tpl=原始 index.html 文本。
-function injectShell(tpl, { body, lang, title, desc, canonical, host }) {
+// 注入到 index.html 外壳。tpl=原始 index.html 文本。jsonld=已构建的 schema.org 对象(随路由类型而异)。
+function injectShell(tpl, { body, lang, title, desc, canonical, jsonld }) {
   const htmlLang = lang === 'zh' ? 'zh-CN' : 'en'
   const sep = canonical.includes('?') ? '&' : '?'
   const altZh = esc(canonical + sep + 'lang=zh')
   const altEn = esc(canonical + sep + 'lang=en')
-  const ld = {
-    '@context': 'https://schema.org', '@type': 'WebPage',
-    name: title, description: desc, url: canonical,
-    inLanguage: htmlLang,
-    isPartOf: { '@type': 'WebSite', name: brandOf(host), url: `https://${host}/` },
-  }
+  const ld = jsonld
   const headExtra =
     `<link rel="alternate" hreflang="zh" href="${altZh}"/>` +
     `<link rel="alternate" hreflang="en" href="${altEn}"/>` +
@@ -160,26 +157,50 @@ export default {
       const rendered = await renderRoute(r, lang, brand, env, base)
       if (!rendered) return env.ASSETS.fetch(request)
 
+      // canonical 永远指向**品牌域**(非服务主机),避免 *.pages.dev 与 peer.as 重复收录。
+      const cHost = canonicalHost(host)
+      const canonical = `https://${cHost}${url.pathname}`
+      const brandUrl = `https://${cHost}/`
+      const htmlLang = lang === 'zh' ? 'zh-CN' : 'en'
+
       // 文案(title/desc)与 body 同源:重新按 strings 取(render 不回传)。动态 import 避免顶层循环。
+      // 同时收集结构化事实 -> JSON-LD Dataset(参考 ipinfo 的 variableMeasured 做法,助搜索引擎理解实体)。
       const { asnText, assetText, entryText } = await import('./strings.js')
-      let title, desc
-      if (r.kind === 'entry') { const x = entryText(lang, r.page, brand); title = x.title; desc = x.desc }
-      else if (r.kind === 'asn') {
+      let title, desc, jsonld
+      const site = { '@type': 'WebSite', name: brand, url: brandUrl }
+      if (r.kind === 'entry') {
+        const x = entryText(lang, r.page, brand); title = x.title; desc = x.desc
+        jsonld = { '@context': 'https://schema.org', '@type': 'WebPage',
+          name: title, description: desc, url: canonical, inLanguage: htmlLang, isPartOf: site }
+      } else if (r.kind === 'asn') {
         const [counts, names] = await Promise.all([asnData(env, base), asnames(env, base)])
         const c = counts && counts[r.asn]; const name = (names && names[r.asn]) || ''
-        const x = asnText(lang, { asn: r.asn, name, nameEn: name, v4: (c && c[0]) || 0, v6: (c && c[1]) || 0, brand })
+        const v4 = (c && c[0]) || 0, v6 = (c && c[1]) || 0
+        const x = asnText(lang, { asn: r.asn, name, nameEn: name, v4, v6, brand })
         title = x.title; desc = x.desc
+        const vars = [{ '@type': 'PropertyValue', name: 'ASN', value: `AS${r.asn}` }]
+        if (name) vars.push({ '@type': 'PropertyValue', name: 'AS Name', value: name })
+        vars.push({ '@type': 'PropertyValue', name: 'IPv4 prefixes', value: v4 })
+        vars.push({ '@type': 'PropertyValue', name: 'IPv6 prefixes', value: v6 })
+        jsonld = { '@context': 'https://schema.org', '@graph': [site,
+          { '@type': 'Dataset', name: `AS${r.asn}${name ? ' ' + name : ''}`, description: desc,
+            url: canonical, inLanguage: htmlLang, isPartOf: site, variableMeasured: vars }] }
       } else {
         const sets = await assetData(env, base); const a = (sets && sets[r.key]) || {}
         const x = assetText(lang, { key: r.key, source: a.s || '', descr: a.d || '', count: a.c || 0, brand })
         title = x.title; desc = x.desc
+        const vars = [{ '@type': 'PropertyValue', name: 'AS-SET', value: r.key }]
+        if (a.s) vars.push({ '@type': 'PropertyValue', name: 'Source', value: a.s })
+        vars.push({ '@type': 'PropertyValue', name: 'Direct members', value: a.c || 0 })
+        jsonld = { '@context': 'https://schema.org', '@graph': [site,
+          { '@type': 'Dataset', name: r.key, description: desc,
+            url: canonical, inLanguage: htmlLang, isPartOf: site, variableMeasured: vars }] }
       }
 
       const tplRes = await env.ASSETS.fetch(new URL('/index.html', base))
       if (!tplRes || !tplRes.ok) return env.ASSETS.fetch(request)
       const tpl = await tplRes.text()
-      const canonical = `https://${host}${url.pathname}`
-      const html = injectShell(tpl, { body: rendered.body, lang, title, desc, canonical, host })
+      const html = injectShell(tpl, { body: rendered.body, lang, title, desc, canonical, jsonld })
 
       return new Response(html, {
         headers: {
