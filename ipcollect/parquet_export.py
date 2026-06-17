@@ -7,7 +7,7 @@
   geo{,_v6}/<cc>/   国家 working-set: 每 (pid,cc,city) 一行 + segs(本段范围) + paths_blob + prefix。
   meta.json         version + files(含 _v6) + counts + dfz_ref{,_v6} + countries + country_names(country_dim) +
                     cities + asn_names/ops + asn org(asn_dim) + site_base。
-另: ssg.generate 产出 c/<cc>.html 双语 SEO 落地页 + sitemap + robots。
+另: data/seo/*.json(边缘 SSR 紧凑数据) + ssg.generate 产出 sitemap 索引 + robots(落地页由 _worker.js 同壳 SSR)。
 
 **v4/v6 类型**: v4 的 ip_start/ip_end/segs 导成 **BIGINT**(前端按 number 处理, 行为不变);
 v6 导成 **UHUGEINT**(DuckDB-WASM 给前端 BigInt, 比较隔离在 v6 路径)。geo 表非重叠 -> 代表 cc 用 ASOF join。
@@ -833,11 +833,60 @@ def export(cfg: dict, con, out_dir: str = "dist") -> dict:
     data.mkdir(parents=True, exist_ok=True)
     (data / "meta.json").write_text(json.dumps(meta, ensure_ascii=False), encoding="utf-8")
 
-    # SSG(SEO 落地页) —— 读 pgeo(代表 cc)取各国 top origin。geo 关闭(dn42)则无国家落地页(Phase2 改按 ASN)。
-    if geo_on:
+    # ── SEO 边缘 SSR 用紧凑数据集(dist/data/seo/*.json) ────────────────────────────────
+    # CF Pages Function(_worker.js)在边缘渲染 ASN/AS-SET/入口落地页给爬虫看; Function 读不了 parquet,
+    # 故这里把「每 ASN 通告前缀数」「每 as-set 元信息 + 成员样本」导成小 JSON。**全程 fail-safe**:
+    # 任何异常只降级(SEO 退化为纯前端渲染), 绝不让导出失败。名称走已发布的 asnames.json, 此处不重复。
+    seo_asns: list = []
+    seo_assets: list = []
+    try:
+        seo = data / "seo"
+        seo.mkdir(parents=True, exist_ok=True)
+        # asn.json: {asn: [n_v4, n_v6]} —— 优先读刚写出的 origin_counts parquet, 缺则现算。
+        if has_origin_counts:
+            rows = con.execute(
+                f"SELECT origin_asn, n_v4, n_v6 FROM read_parquet('{pq}/origin_counts/*.parquet') ORDER BY origin_asn").fetchall()
+        else:
+            rows = con.execute(
+                "SELECT origin_asn, count(DISTINCT pid) FILTER (WHERE family=4)::BIGINT, "
+                "count(DISTINCT pid) FILTER (WHERE family=6)::BIGINT FROM pathobs "
+                "WHERE origin_asn IS NOT NULL GROUP BY origin_asn ORDER BY origin_asn").fetchall()
+        asn_seo = {str(int(a)): [int(v4 or 0), int(v6 or 0)] for a, v4, v6 in rows if a is not None}
+        (seo / "asn.json").write_text(
+            json.dumps(asn_seo, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+        seo_asns = list(asn_seo.keys())
+        # asset.json: {set_key: {s:source, n:name, d:descr(截断), c:n_members, m:[成员样本 ≤20]}}
+        if has_asset:
+            arows = con.execute("""
+                WITH samp AS (
+                    SELECT set_key, list(val ORDER BY ord)[1:20] AS members
+                    FROM as_set_member GROUP BY set_key)
+                SELECT s.set_key, s.source, s.name, s.descr, s.n_members, samp.members
+                FROM as_set s LEFT JOIN samp USING (set_key) ORDER BY s.set_key""").fetchall()
+            asset_seo = {}
+            for k, src, nm, descr, nmem, members in arows:
+                if not k:
+                    continue
+                asset_seo[str(k)] = {
+                    "s": src or "", "n": nm or "",
+                    "d": (str(descr)[:160] if descr else ""),
+                    "c": int(nmem or 0),
+                    "m": [str(x) for x in (members or [])],
+                }
+            (seo / "asset.json").write_text(
+                json.dumps(asset_seo, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+            seo_assets = list(asset_seo.keys())
+        util.log(f"  SEO 数据: asn.json {len(seo_asns)} 条; asset.json {len(seo_assets)} 条")
+    except Exception as e:  # noqa  SEO 数据失败只降级, 绝不让导出失败
+        util.log(f"  ! SEO 数据导出失败, 降级(SEO 退化为纯前端): {e}", err=True)
+
+    # SSG: sitemap 索引(ASN + AS-SET + 入口页, 带 hreflang) + robots.txt。爬虫据此发现可被 _worker.js SSR 的落地页。
+    # (旧的 /c/<cc>.html 国家落地页已废弃 —— 它是与 SPA 脱节的死胡同页, 改由 _worker.js 同壳 SSR 接管。)
+    try:
         from . import ssg
-        n_ssg = ssg.generate(out, meta, con, asnames)
-    else:
+        n_ssg = ssg.generate(out, meta, seo_asns, seo_assets)
+    except Exception as e:  # noqa  sitemap 失败只降级
+        util.log(f"  ! sitemap 生成失败, 降级: {e}", err=True)
         n_ssg = 0
 
     total_bytes = sum(p.stat().st_size for p in pq.rglob("*.parquet"))

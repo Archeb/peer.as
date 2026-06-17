@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "include": ["/*"],
+  "exclude": [
+    "/assets/*",
+    "/data/*",
+    "/duckdb-ext/*",
+    "/duckdb/*",
+    "/sw.js",
+    "/favicon.svg",
+    "/icons.svg",
+    "/dmit.svg",
+    "/sitemap.xml",
+    "/sitemaps/*",
+    "/robots.txt"
+  ]
+}

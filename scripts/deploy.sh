@@ -149,6 +149,10 @@ if [ "$DO_BUILD" = 1 ]; then
   fi
   ./ipc build --out dist
   git -C "$PROJ" checkout -- ipcollect/web/src/lib/rdap-bootstrap.json 2>/dev/null || true
+  # 边缘 SEO SSR(CF-only): 产 dist/_worker.js + dist/_routes.json。**fail-safe**: 脚本永远 exit 0,
+  # 失败只告警 + 清理产物(站点退化为纯静态 + SPA-200 回退, SEO 退化为纯前端), 绝不阻断部署。
+  log "前端: 构建边缘 SEO SSR worker（dist/_worker.js, fail-safe）"
+  scripts/build-ssr.sh "$PROJ/dist" || true
 else
   log "前端: --no-build，仅 ipc sync-web（拷已构建 web/dist -> dist）"
   ./ipc sync-web --out dist
@@ -199,8 +203,9 @@ deploy_cn(){
   local RSH="ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20"
   # CN VPS（Caddy 无大小限制）托管**完整 dist 含 wasm**。--delete 清掉本地没有的旧文件（含已废 /duckdb）。
   # meta.json 最后单独传（原子切版本：数据分片先到位再切版本号）。best-effort，失败不阻断（境内回退 CF）。
-  log "CN: rsync 整站 dist/ -> ${CN_DEPLOY_SSH}:${CNPATH}/（含完整 wasm；meta.json 最后传）"
-  if rsync -a --delete --exclude='data/meta.json' -e "$RSH" "$PROJ/dist/" "${CN_DEPLOY_SSH}:${CNPATH}/" \
+  # _worker.js/_routes.json 是 CF-only 的边缘 SSR(Caddy 跑不了 Worker), 不发往 CN(否则源码暴露在 cn.peer.as)。
+  log "CN: rsync 整站 dist/ -> ${CN_DEPLOY_SSH}:${CNPATH}/（含完整 wasm；排除 _worker.js/_routes.json；meta.json 最后传）"
+  if rsync -a --delete --exclude='data/meta.json' --exclude='_worker.js' --exclude='_routes.json' -e "$RSH" "$PROJ/dist/" "${CN_DEPLOY_SSH}:${CNPATH}/" \
      && rsync -a -e "$RSH" "$PROJ/dist/data/meta.json" "${CN_DEPLOY_SSH}:${CNPATH}/data/meta.json"; then
     log "CN: ✓ 同步完成"
   else

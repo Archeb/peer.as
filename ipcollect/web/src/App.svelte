@@ -46,8 +46,29 @@
     if (d) d.setAttribute('content', t('page_desc'))
   })
 
+  // ── 边缘 SSR(#seo-shell)无缝接管 ───────────────────────────────────────────
+  // _worker.js 给爬虫/直达落地者注入了全屏覆盖的 #seo-shell(含真实内容)。SPA 在此处「同壳接管」:
+  // 当对应视图的实时内容就绪后移除该覆盖层, 露出 app —— 同 URL、无跳转、内容优先(加载期看到的是内容而非转圈)。
+  // **仅 DOM id 约定, 不 import seo/**(单向依赖)。纯静态/本地 dev 无 #seo-shell 时全为 no-op。
+  let _seoGone = false
+  function dropSeo() { if (!_seoGone) { _seoGone = true; document.getElementById('seo-shell')?.remove() } }
+  $effect(() => {
+    if (_seoGone) return
+    if (S.fatal) return dropSeo()                                   // 出错 -> 让 app 的错误态显示
+    if (S.view === 'whois' || S.view === 'trace') return dropSeo()  // 即时视图: 立刻接管
+    if (S.view === 'routing') {
+      if (S.loading) return                                         // 引擎加载中: 继续展示 SSR 内容
+      if (S.detailKind === 'asn') { if (S.asnView && !S.asnView.loading) dropSeo(); return }
+      if (S.detailKind === 'prefix') { if (S.insight && !S.insight.loading) dropSeo(); return }
+      if (S.mode === 'asset') { if (S.asset && !S.asset.loading) dropSeo(); return }
+      dropSeo()                                                     // 路由分析空落地页等已就绪
+    }
+  })
+
   onMount(async () => {
     applyTheme(localStorage.getItem('ipc-theme') || 'auto')
+    setTimeout(dropSeo, 12000)   // 兜底: 引擎卡住/异常时, 覆盖层最多 12s 后也移除, 绝不长期遮挡 app
+
     S.advWhois = localStorage.getItem('ipc-adv-whois') === '1'   // 「高级搜索」记忆态
     const qp = new URLSearchParams(location.search)
     setLang(qp.get('lang') || localStorage.getItem('ipc-lang')

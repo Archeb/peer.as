@@ -31,7 +31,8 @@
 - `store.py` — **DuckDB 工作库**：连接、`obs`/`meta` 表、CSV 流式灌入、`finalize`（去重 → `pathobs`/`prefix`）。
 - `geoip.py` — GeoLite 过期检查/下载、`build_geo`（三轨合并非重叠区间 + AS org）、按 family 内存 bisect 的 geo 索引。
 - `parquet_export.py` — **主发布步骤**（`ipc export-parquet`）：读工作库出两套 Parquet（`prefixes`/`paths`/`pathsearch`/`byorigin`/`geo` 等，v4+v6）+ `asnames.json`/`asnorg.json` + `meta.json`，调 `ssg`，拷前端。
-- `ssg.py` — 每国家双语 SEO 落地页 + sitemap/robots。
+- `ssg.py` — **sitemap 索引 + 分片(ASN/AS-SET/入口, 带 hreflang)+ robots**(旧的 /c/*.html 国家落地页已废弃)。`parquet_export` 另产 `data/seo/{asn,asset}.json`(边缘 SSR 紧凑数据)。
+- **边缘 SEO SSR(CF-only, fail-safe)**: `web/src/seo/`(`*.Seo.svelte` + `strings.js` + `worker.js`,**零 app 依赖、单向**)→ `vite.ssr.config.js` 打成 `dist/_worker.js`(CF Pages Advanced Mode)+ `_routes.json`。爬虫访问 `/<asn>`/`/asset/<key>`/入口页 → 同壳 SSR(本地化 head + #seo-shell 内容块),SPA 启动后 `App.svelte` 移除 #seo-shell 无缝接管(同 URL)。`scripts/build-ssr.sh` 永远 exit 0:失败/缺依赖只跳过(不产 `_worker.js`)→ 站点退化为纯静态 + SPA-200 回退,**绝不阻断部署**。CN 镜像(Caddy 跑不了 Worker)不发 `_worker.js`,境内仍纯前端渲染(Googlebot 走 CF)。
 - `rpki.py` / `irr.py` / `asset.py` — 路由起源验证（RPKI ROA / IRR route / IRR as-set 锥）。导出期预计算成静态列/数据集，前端零后端查询；`meta.has_*` 缺失即前端降级。
 - `profile.py` — 站点 profile（peeras / dn42）特性开关（见下「站点 Profile」）。
 - `registry.py` — dn42 专用：RPSL registry 解析 → 逐 ASN/域名静态 whois。
