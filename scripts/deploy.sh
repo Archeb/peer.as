@@ -162,16 +162,15 @@ elif [ "$DO_BUILD" = 1 ]; then
   fi
   ./ipc build --out dist
   git -C "$PROJ" checkout -- ipcollect/web/src/lib/rdap-bootstrap.json 2>/dev/null || true
-  # 边缘 SEO SSR functions 开关(默认关)。2026-06-18 关停:GPTBot 等 AI 爬虫把每个 ASN 落地页
-  # 都打成一次 Pages Function invocation(advanced mode),免费版 10万/天配额被爬满;而 peer.as 是
-  # custom-domain 接入(zone 不在本 CF 账号)→ 无 WAF/Rate-Limiting 可在边缘拦。故回退到加 SSR 之前的
-  # 纯静态 SPA(SPA-200 回退;AGENTS.md「边缘 SEO SSR」一节),静态资源不计费、配额风险消失。
-  # 重新启用 SSR:部署前 `export SSR=1`(产 dist/_worker.js + _routes.json,仍 fail-safe、永不阻断)。
-  if [ "${SSR:-0}" = "1" ]; then
-    log "前端: 构建边缘 SEO SSR worker（dist/_worker.js, fail-safe; SSR=1）"
+  # SEO SSR bundle(dist/_worker.js)。**只为 peeras 的 CN VPS 自托管而建**(cn_mirror=1)。
+  # 背景:peer.as 的 SSR 不再跑 CF Pages Function(配额被 GPTBot 爬爆 + custom-domain 无 WAF),
+  # 改由 CN VPS 的 peeras-ssr.service 跑同一份 bundle(见 deploy_cn_frontend 自动推送+重启)。
+  # dn42(无 cn_mirror、不指望 SEO)→ 不建、不发 _worker.js,SSR 全关。构建 fail-safe、永不阻断。
+  if [ "$CN_MIRROR" = 1 ]; then
+    log "前端: 构建 SEO SSR bundle（dist/_worker.js → CN VPS 自托管, fail-safe）"
     scripts/build-ssr.sh "$PROJ/dist" || true
   else
-    log "前端: SSR functions 已关闭（SSR=1 启用）→ 纯静态 SPA，清理残留 _worker.js/_routes.json"
+    log "前端: 无 cn_mirror（如 dn42）→ 不建 SSR bundle，清理残留 _worker.js/_routes.json"
     rm -f "$PROJ/dist/_worker.js" "$PROJ/dist/_routes.json"
   fi
 else
@@ -252,16 +251,8 @@ deploy_cf_data(){   # dist/data -> DATA_CF_PROJECT(data.peer.as);stage = data/ +
     --commit-message="deploy.sh $SITE data" || rc=$?
   rm -rf "$STAGE"; return $rc
 }
-deploy_cf_frontend(){   # dist 去掉 data/ + 去 wasm -> CF_PROJECT(peer.as)
-  local STAGE rc=0
-  STAGE="$(mktemp -d "$PROJ/.cfstage.XXXXXX")" || { log "CF(fe): ✗ 暂存失败"; return 1; }
-  cp -al "$PROJ/dist/." "$STAGE/" || { rm -rf "$STAGE"; log "CF(fe): ✗ 硬链接失败"; return 1; }
-  rm -rf "$STAGE/data"; rm -f "$STAGE"/assets/*.wasm 2>/dev/null || true
-  log "CF(fe): wrangler pages deploy → 项目 $CF_PROJECT（不含 /data；排除超限 wasm）"
-  wrangler pages deploy "$STAGE" --project-name "$CF_PROJECT" --branch main --commit-dirty=true \
-    --commit-message="deploy.sh $SITE web" || rc=$?
-  rm -rf "$STAGE"; return $rc
-}
+# (deploy_cf_frontend 已移除: peeras 前端不再推 CF Pages 前端项目 bgp-insights(已休眠),
+#  改由 deploy_cn_frontend 进 CN VPS(含自托管 SSR bundle)。dn42 走下面耦合 deploy_cf。)
 deploy_cn_data(){   # rsync 仅 dist/data -> cn:/data(--delete 限 data/ 内)
   [ -z "${CN_DEPLOY_SSH:-}" ] && { log "CN(data): 未设 CN_DEPLOY_SSH,跳过"; return 0; }
   local CNPATH="${CN_DEPLOY_PATH:-/var/www/cn}"
@@ -278,6 +269,16 @@ deploy_cn_frontend(){   # rsync dist 但排除 data/(数据由 deploy_cn_data �
   if rsync -a --delete --exclude='/data' --exclude='/_worker.js' --exclude='/_routes.json' -e "$RSH" "$PROJ/dist/" "${CN_DEPLOY_SSH}:${CNPATH}/"; then
     log "CN(fe): ✓ 同步完成"
   else log "CN(fe): ⚠ 同步失败(不阻断)"; fi
+  # 自托管 SSR(peeras-ssr.service)的 bundle 自动化: 前端外壳 rsync 完后, 推 _worker.js + wrapper
+  # 到 /opt/peeras-ssr/ 再 restart(服务内存缓存 index.html, 重启才重读新外壳 → 与新 assets 一致)。
+  # best-effort: 失败只告警, VPS 继续跑旧 bundle(SSR 不中断)。_worker.js 仅 cn_mirror 时构建(见上)。
+  if [ -f "$PROJ/dist/_worker.js" ]; then
+    log "CN(fe): 推 SSR bundle + wrapper -> ${CN_DEPLOY_SSH}:/opt/peeras-ssr/ 并 restart peeras-ssr"
+    if rsync -a -e "$RSH" "$PROJ/dist/_worker.js" "$PROJ/deploy/ssr-server.mjs" "${CN_DEPLOY_SSH}:/opt/peeras-ssr/" \
+       && $RSH "$CN_DEPLOY_SSH" 'systemctl restart peeras-ssr'; then
+      log "CN(fe): ✓ SSR bundle 已更新 + 服务重启"
+    else log "CN(fe): ⚠ SSR bundle 推送/重启失败(不阻断, VPS 继续跑旧 bundle)"; fi
+  fi
 }
 
 # 部署分派: 解耦(peeras)按模式只推一类;耦合(dn42)整 dist 一把推。CN best-effort, CF 失败=中止。
@@ -291,12 +292,14 @@ if [ "$DECOUPLED" = 1 ] && [ "$DATA_MODE" = 1 ]; then
   [ -n "$CF_PID" ] && { wait "$CF_PID" || CF_RC=$?; }
   [ "$CF_RC" = 0 ] || { log "✗ CF(data) 部署失败(rc=$CF_RC) —— 中止"; exit 1; }
 elif [ "$DECOUPLED" = 1 ]; then
-  CN_PID= ; CF_PID=
-  [ "$TARGET" != cn ] && { deploy_cf_frontend & CF_PID=$!; }
-  { [ "$TARGET" != cf ] && [ "$CN_MIRROR" = 1 ]; } && { deploy_cn_frontend & CN_PID=$!; }
-  [ -n "$CN_PID" ] && { wait "$CN_PID" || true; }
-  [ -n "$CF_PID" ] && { wait "$CF_PID" || CF_RC=$?; }
-  [ "$CF_RC" = 0 ] || { log "✗ CF(fe) 部署失败(rc=$CF_RC) —— 中止"; exit 1; }
+  # peeras 前端: **只进 CN VPS**(含自托管 SSR bundle 推送 + 服务重启, 见 deploy_cn_frontend)。
+  # 不再推 CF Pages 前端项目(bgp-insights 已休眠): peer.as 经 CF for SaaS 回源到 VPS, 前端/SSR/外壳
+  # 全由 VPS 提供; CF 上 peeras 只剩 data.peer.as(数据项目)。故无 CF 失败闸(CF_RC 恒 0)。
+  if [ "$TARGET" = cf ]; then
+    log "前端: peeras 前端已无 CF 目标(只进 CN VPS) —— --cf-only 在前端模式下无操作"
+  elif [ "$CN_MIRROR" = 1 ]; then
+    deploy_cn_frontend
+  fi
 else
   gate_data
   CN_PID= ; CF_PID=

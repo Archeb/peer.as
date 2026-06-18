@@ -34,9 +34,9 @@
 - `ssg.py` — **sitemap 索引 + 分片(ASN/AS-SET/入口, 带 hreflang)+ robots**(旧的 /c/*.html 国家落地页已废弃)。`parquet_export` 另产 `data/seo/{asn,asset}.json`(边缘 SSR 紧凑数据)。
 - **边缘 SEO SSR(CF-only, fail-safe)**: `web/src/seo/`(`*.Seo.svelte` + `strings.js` + `worker.js`,**单向依赖**:`*.Seo.svelte`/`strings.js` 零 app 依赖;`worker.js` 仅额外引 `../lib/icons.js`(纯 FA re-export、零浏览器依赖、tree-shake 只带 iSpinner))→ `vite.ssr.config.js` 打成 `dist/_worker.js`(CF Pages Advanced Mode)+ `_routes.json`。爬虫访问 `/<asn>`/`/asset/<key>`/入口页 → 注入 `#seo-shell`,SPA 启动后 `App.svelte` 按 id 移除接管(同 URL)。前缀不做 SSR。
   - **`#seo-shell` 两层(一份 HTML 两类受众, 靠"盖"不靠"换")**:`.seo-bot`=给爬虫的真内容(h1/摘要/内链/事实, **正常渲染不 display:none** → 非 cloaking, 同一份 HTML 发所有 UA)+ `.seo-load`=不透明加载罩盖在上面(复用 app `.boot` 观感:mono+accent spinner+该路由 `cta` 文案, 主题 token 内联自 app.css)。人类只看到 loading 罩(loading→内容, 不闪);不跑 JS 的爬虫读源码 `.seo-bot`;跑 JS 的(Googlebot)JS 一到就揭罩见 SPA。旧版整屏"内容文档"覆盖层已废弃(SPA 接管时海外首屏会闪不同内容)。`/networks` 国家目录内链不放第一屏:在 `.seo-bot` 内 + 左侧 `Sidebar.svelte` footer(`features.geo` 门控)。
-  - `scripts/build-ssr.sh` 永远 exit 0:失败/缺依赖只跳过(不产 `_worker.js`)→ 站点退化为纯静态 + SPA-200 回退,**绝不阻断部署**。CN 镜像(Caddy 跑不了 Worker)不发 `_worker.js`,境内仍纯前端渲染(Googlebot 走 CF)。
-  - **SSR 总开关(2026-06-18 默认关)**:`deploy.sh` 仅在 `SSR=1` 时才跑 `build-ssr.sh`;否则清掉 `dist/_worker.js`+`_routes.json` 走纯静态 SPA。关停原因:GPTBot 等 AI 爬虫把每个 ASN 落地页打成一次 Pages Function invocation,免费版 10万/天配额被爬满,而 peer.as 是 custom-domain 接入(zone 不在本 CF 账号)→ 边缘无 WAF/Rate-Limiting 可拦。**重开 SSR**:部署前 `export SSR=1`。注:关停后 `/networks` 枢纽、og:image 大图、落地页 SSR 一并失效(纯客户端渲染);CN Caddyfile 的 `/networks*` 反代 CF Worker 成悬挂规则(指向纯静态,无害,择机清)。
-  - **/networks 国家分流目录(SEO 内链枢纽)**:`/networks`(国家网格)→ `/networks/<cc>[/<page>]`(该国 ASN 列表,500/页,链到 `/<asn>`)。由 `_worker.js` 渲染**独立目录页(非 SPA 外壳,双语 `?lang`)**,数据 `data/seo/networks.json`(export 从 autnums 末段 CC 建 asn→国家)。首页(EntrySeo + SPA WhoisView)有可见入口链接;sitemap 收录全部。**CN 镜像无 Worker → Caddy 反代 `/networks*` 到 CF**(见 Caddyfile)。
+  - `scripts/build-ssr.sh` 永远 exit 0:失败/缺依赖只跳过(不产 `_worker.js`)→ 退化为纯静态 + SPA-200 回退,**绝不阻断部署**。(同一份 bundle 现由 CN VPS 的 `peeras-ssr.service`(Node)自托管运行,见下条;Caddy 自身不跑 Worker。)
+  - **SSR 改为「CN VPS 自托管」(2026-06-18,不再跑 CF Pages Function)**:CF 上 SSR 已下线(GPTBot 把每个 ASN 落地页打成一次 Pages Function invocation,免费版 10万/天配额被爬满;peer.as 是 custom-domain 无 WAF 可拦)。现 **peer.as → CF for SaaS(`opentrace.app` zone 自定义主机名)→ 回源 CN VPS**,VPS 用 **Node 跑同一份 `_worker.js` bundle**(`peeras-ssr.service` → `deploy/ssr-server.mjs`,听 `127.0.0.1:8788`,数据走本地盘环回);**Caddy 把 SEO 路由(`@seo`)reverse_proxy 到它**(见 `deploy/cn.peer.as.Caddyfile`)。`build-ssr.sh` **仅 `cn_mirror`=peeras 时建 bundle**,`deploy_cn_frontend` 自动 scp 到 `/opt/peeras-ssr/` + `restart peeras-ssr`(见「部署 SOP」)。**dn42**(无 cn_mirror、不要 SEO)→ 不建 bundle,SSR 全关。CF 上 peeras 只剩 `data.peer.as`(数据项目)。CF 端 cache-all 须排除 `/dns-query`/`/whois`/`/cdn-cgi` 且 Edge TTL「尊重源」(否则 `meta.json` no-cache 被缓存死、`/cdn-cgi/trace` 地理探针被缓存乱)。
+  - **/networks 国家分流目录(SEO 内链枢纽)**:`/networks`(国家网格)→ `/networks/<cc>[/<page>]`(该国 ASN 列表,500/页,链到 `/<asn>`)。由 `_worker.js` 渲染**独立目录页(非 SPA 外壳,双语 `?lang`)**,数据 `data/seo/networks.json`(export 从 autnums 末段 CC 建 asn→国家)。首页(EntrySeo + SPA WhoisView)有可见入口链接;sitemap 收录全部。**`/networks*` 与所有 SEO 落地页一样由 VPS 自托管 SSR(`peeras-ssr.service`)渲染**,Caddy `@seo` reverse_proxy 到 `127.0.0.1:8788`(取代旧的反代 CF Worker)。
   - **OG 大图(社交分享卡)**:CF Function 给 ASN/AS-SET/入口页注入 `og:image` → **CN VPS 上的 Pillow 渲染器**(`deploy/og-renderer.py`,systemd `og-renderer.service`,监听 127.0.0.1:8092,Caddy 反代 `/og/*`)。它读本机 `/var/www/cn/data/{seo/*.json,asnames.json,meta.json}` 画 1200×630 PNG(ASN 卡含 IPv4/IPv6/Peers + 右下角「最新采集点快照时刻」;中文用 Noto Sans CJK SC),磁盘缓存 systemd `CacheDirectory=/var/cache/og-renderer`(**不可放 /var/www/cn —— 会被 deploy rsync --delete 清掉**;按源 JSON mtime 失效)。`asn.json` 含第 3 元素 peers(来自 asn_neigh)。**手动部署**(同 Caddyfile,deploy.sh 不管):改 `og-renderer.py` 后 `scp 到 /opt/og-renderer/ && systemctl restart og-renderer`;改 Caddyfile 后 `scp 到 /etc/caddy/Caddyfile && caddy validate && systemctl reload caddy`。dn42 无此渲染器 → CF Function 对 dn42 不出 `og:image`。
 - `rpki.py` / `irr.py` / `asset.py` — 路由起源验证（RPKI ROA / IRR route / IRR as-set 锥）。导出期预计算成静态列/数据集，前端零后端查询；`meta.has_*` 缺失即前端降级。
 - `profile.py` — 站点 profile（peeras / dn42）特性开关（见下「站点 Profile」）。
@@ -98,7 +98,7 @@
 2. `git fetch origin` → 不能 ff（origin/main 被 dn42 推进、分叉）则 `git rebase origin/main`（可能撞 `AGENTS.md`/`db.js`）。
 3. `git push origin dev:main`。**GitOps 唯一真源 = `origin/main`；不 push 到 main，线上 ≤8h 被 cron 回滚。**
 4. **从主 checkout** `cd /home/aosc/test-ip-collect && scripts/deploy.sh`。**数据/前端已解耦(peeras)成两条独立流水线 + 各自独立锁(互不阻塞)**：
-   - **只动前端 → 无 flag**：`build`+`build-ssr` → 推**前端项目** `bgp-insights`(**不含 /data**) + CN 前端。秒级、永不被数据 cron 阻塞。
+   - **只动前端 → 无 flag**：`build`+`build-ssr`(SSR bundle 仅 `cn_mirror`=peeras 建)→ **只推 CN VPS**(`deploy_cn_frontend`：rsync 前端外壳 + scp `_worker.js`/`ssr-server.mjs` 到 `/opt/peeras-ssr/` + `restart peeras-ssr`)。**不再推 CF Pages 前端项目**(`bgp-insights` 已休眠)——peer.as 经 CF for SaaS 回源到 VPS,前端/SSR/外壳全由 VPS 提供。秒级、不被数据 cron 阻塞。**dn42**(无 cn_mirror、不要 SEO)→ 不建 SSR bundle,整 dist 推自己的 CF Pages(SSR 全关)。
    - **刷数据 → `--data`**(全量)/`--data-light`(增量, 需先 `--data` 打底)：`export-parquet` → 推**数据项目** `bgp-insights-data`(`data.peer.as`) + CN `/data`。**不碰前端**。
    - 脚本自己 GitOps ff、数据闸校验、CF+CN 并行、末尾校验(前端核入口一致；数据核 `meta.version`)。
    - **绝不在缺 `.env` 的 worktree 跑**（CN 凭据 + `VITE_DATA_BASE` 在 `.env`）；**绝不手敲 wrangler/rsync/手动 build**。
@@ -111,7 +111,7 @@
 
 **前端与数据是两个独立 Pages 项目**(2026-06-18 解耦，让前端/worker 部署不再被 8h/2h 数据 cron 阻塞)：
 
-- **前端项目** `bgp-insights`(`peer.as`)：只含前端 + `_worker.js`，**不含 `/data`**。
+- **前端项目** `bgp-insights`(`peer.as`)：**已休眠(2026-06-18)**。peer.as 改走 CF for SaaS(`opentrace.app` zone 自定义主机名)→ 回源 CN VPS,前端/SSR/外壳全由 VPS(`peeras-ssr.service` + Caddy)提供;SSR 自托管见「边缘 SEO SSR」节 + `deploy/{ssr-server.mjs,peeras-ssr.service,cn.peer.as.Caddyfile}`。本 Pages 项目不再部署、无人引用(保留可回退)。
 - **数据项目** `bgp-insights-data`(`data.peer.as`，CNAME→`bgp-insights-data.pages.dev`)：只含 `/data`(parquet/json/seo)，`_headers` 给 CORS `*` + 缓存(`deploy/data-headers`)。**同样 CF 边缘分发**(非单源，故不重蹈 R2 冷缓存覆辙)。
 
 数据宿主**按用户位置在 `web/src/lib/db.js` 的 `configure()` 运行时选**(`OVERSEAS`=`VITE_DATA_BASE`，默认 `data.peer.as/data`)：
