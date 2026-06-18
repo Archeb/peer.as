@@ -8,24 +8,26 @@ export const BRANDS = { peeras: 'PEER.AS', dn42: 'DN42.PEER.AS' }
 
 export function pickLang(lang) { return lang === 'en' ? 'en' : 'zh' }
 
-// ASN 落地页文案。data = {asn, name, nameEn, org, v4, v6, brand}
+// ASN 落地页文案。data = {asn, name, nameEn, org, v4, v6, peers, brand}
 export function asnText(lang, d) {
   const zh = lang !== 'en'
   const nm = (zh ? d.name : (d.nameEn || d.name)) || ''
   const brand = d.brand || BRANDS.peeras
   const total = (d.v4 || 0) + (d.v6 || 0)
+  const peers = d.peers || 0
   const heading = `AS${d.asn}${nm ? ' · ' + nm : ''}`
   return {
     nm, brand, heading,
     v4label: zh ? 'IPv4 前缀' : 'IPv4 prefixes',
     v6label: zh ? 'IPv6 前缀' : 'IPv6 prefixes',
+    peerLabel: zh ? '邻居(Peers)' : 'Peers',
     orgLabel: zh ? '运营组织' : 'Organization',
     summary: zh
       ? `自治系统 AS${d.asn}${nm ? `(${nm})` : ''} 在全球 BGP 路由表中作为 origin 通告 `
-        + `${d.v4 || 0} 个 IPv4 前缀和 ${d.v6 || 0} 个 IPv6 前缀(共 ${total} 个)。`
+        + `${d.v4 || 0} 个 IPv4 前缀和 ${d.v6 || 0} 个 IPv6 前缀(共 ${total} 个),观测到 ${peers} 个邻居(peers)。`
         + `在 ${brand} 查看其通告前缀、回程 AS_PATH、上下游邻居(provider/peer/customer)与对等关系。`
       : `Autonomous System AS${d.asn}${nm ? ` (${nm})` : ''} originates ${d.v4 || 0} IPv4 `
-        + `and ${d.v6 || 0} IPv6 prefixes (${total} total) in the global BGP routing table. `
+        + `and ${d.v6 || 0} IPv6 prefixes (${total} total) and is seen with ${peers} peers in the global BGP routing table. `
         + `Explore its announced prefixes, backhaul AS_PATH, upstream/peer/downstream neighbors and peering on ${brand}.`,
     cta: zh ? '正在加载交互式 BGP 分析…' : 'Loading interactive BGP analysis…',
     title: zh
@@ -33,9 +35,9 @@ export function asnText(lang, d) {
       : `AS${d.asn}${nm ? ' ' + nm : ''} — BGP routing · prefixes · neighbors · ${brand}`,
     desc: zh
       ? `AS${d.asn}${nm ? `(${nm})` : ''} 的 BGP 洞察:${d.v4 || 0} 个 IPv4 + ${d.v6 || 0} 个 IPv6 通告前缀、`
-        + `回程 AS_PATH、上下游与对等关系。${brand} 全球 BGP/IP/ASN 情报。`
+        + `${peers} 个邻居、回程 AS_PATH 与对等关系。${brand} 全球 BGP/IP/ASN 情报。`
       : `BGP insights for AS${d.asn}${nm ? ` (${nm})` : ''}: ${d.v4 || 0} IPv4 + ${d.v6 || 0} IPv6 prefixes, `
-        + `backhaul AS_PATH, upstreams, peers and customers. Global BGP/IP/ASN intelligence on ${brand}.`,
+        + `${peers} peers, backhaul AS_PATH and peering. Global BGP/IP/ASN intelligence on ${brand}.`,
   }
 }
 

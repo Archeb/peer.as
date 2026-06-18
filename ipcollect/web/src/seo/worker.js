@@ -69,7 +69,7 @@ async function renderRoute(r, lang, brand, env, base) {
     const c = counts && counts[r.asn]
     const name = (names && names[r.asn]) || ''
     if (!c && !name) return null   // 未知 ASN -> 交给 SPA(可能是新数据/前缀误配)
-    const props = { lang, asn: r.asn, name, nameEn: name, v4: (c && c[0]) || 0, v6: (c && c[1]) || 0, brand }
+    const props = { lang, asn: r.asn, name, nameEn: name, v4: (c && c[0]) || 0, v6: (c && c[1]) || 0, peers: (c && c[2]) || 0, brand }
     return { body: render(AsnSeo, { props }).body }
   }
   if (r.kind === 'asset') {
@@ -186,13 +186,14 @@ export default {
       } else if (r.kind === 'asn') {
         const [counts, names] = await Promise.all([asnData(env, base), asnames(env, base)])
         const c = counts && counts[r.asn]; const name = (names && names[r.asn]) || ''
-        const v4 = (c && c[0]) || 0, v6 = (c && c[1]) || 0
-        const x = asnText(lang, { asn: r.asn, name, nameEn: name, v4, v6, brand })
+        const v4 = (c && c[0]) || 0, v6 = (c && c[1]) || 0, peers = (c && c[2]) || 0
+        const x = asnText(lang, { asn: r.asn, name, nameEn: name, v4, v6, peers, brand })
         title = x.title; desc = x.desc
         const vars = [{ '@type': 'PropertyValue', name: 'ASN', value: `AS${r.asn}` }]
         if (name) vars.push({ '@type': 'PropertyValue', name: 'AS Name', value: name })
         vars.push({ '@type': 'PropertyValue', name: 'IPv4 prefixes', value: v4 })
         vars.push({ '@type': 'PropertyValue', name: 'IPv6 prefixes', value: v6 })
+        vars.push({ '@type': 'PropertyValue', name: 'Peers', value: peers })
         jsonld = { '@context': 'https://schema.org', '@graph': [site,
           { '@type': 'Dataset', name: `AS${r.asn}${name ? ' ' + name : ''}`, description: desc,
             url: canonical, inLanguage: htmlLang, isPartOf: site, variableMeasured: vars }] }
