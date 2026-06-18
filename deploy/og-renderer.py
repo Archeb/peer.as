@@ -20,6 +20,8 @@ import os
 import re
 import subprocess
 import threading
+import time
+import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
@@ -29,6 +31,8 @@ from PIL import Image, ImageDraw, ImageFont
 # 用 systemd CacheDirectory(/var/cache/og-renderer, 属 www-data)。
 DATA = os.environ.get("OG_DATA", "/var/www/cn/data")
 CACHE = os.environ.get("OG_CACHE", "/var/cache/og-renderer")
+# 随服务一起部署的静态资产(rdap-bootstrap.json + og-icons/*.png), 默认取脚本同目录(/opt/og-renderer)。
+ASSETS = os.environ.get("OG_ASSETS", os.path.dirname(os.path.abspath(__file__)))
 PORT = int(os.environ.get("OG_PORT", "8092"))
 W, H = 1200, 630
 
@@ -36,8 +40,23 @@ BG = (10, 14, 21)       # #0a0e15  与站点深色主题一致
 FG = (221, 230, 240)    # #dde6f0
 MUTED = (143, 158, 178)
 ACCENT = (91, 157, 255) # #5b9dff
+SIGNAL = (248, 113, 113) # #f87171  abuse 联系人高亮(红)
 CARD = (18, 24, 38)
 LINE = (30, 38, 56)
+
+# ── ASN 卡右栏 WHOIS: RDAP autnum 注册联系人(注册人/管理技术/滥用举报…)─────────────────────
+# og-renderer 跑在能上网的真实 VPS, 渲染 ASN 卡时实时查一次 RDAP(复用前端同款 rdap-bootstrap.json
+# 定位 RIR base), 取顶层(+一层嵌套)entity 的 roles+name。**独立长 TTL 磁盘缓存**(whois 极少变),
+# 与 og 图本身的 data_mtime 缓存分开 —— 故数据每次刷新重渲染 og 图时, whois 直接读缓存不重查。
+# 失败/查不到 → 右栏不画(优雅降级, 文字卡照出)。peeras only(dn42 无 og 渲染器)。
+WH_X = 720              # 右栏起点 x; 左栏(AS 号/名称/pills)收敛到此左侧
+RDAP_TIMEOUT = 5
+RDAP_TTL = 30 * 86400     # 命中(有联系人): 缓 30 天
+RDAP_NEG_TTL = 2 * 86400  # 未命中/失败的负缓存: 2 天后再试(不卡死)
+# RDAP role -> 简短英文标签(与前端 i18n en 对齐); 多角色用 ' · ' 连接。未知角色原样。
+ROLE_LABEL = {"registrant": "registrant", "administrative": "admin", "technical": "tech",
+              "abuse": "abuse", "registrar": "registrar", "noc": "NOC", "reseller": "reseller",
+              "routing": "routing", "proxy": "proxy", "notifications": "notify"}
 
 try:
     os.makedirs(CACHE, exist_ok=True)
@@ -160,6 +179,156 @@ def _pill(d, x, y, label, value, vcolor):
     d.text((x, y + 34), value, font=vf, fill=vcolor)
     return max(d.textlength(label, font=lf), d.textlength(value, font=vf))
 
+# ── RDAP 取数(右栏 WHOIS)──────────────────────────────────────────────────────────────
+_BOOT = None
+def _boot():
+    global _BOOT
+    if _BOOT is None:
+        try:
+            with open(os.path.join(ASSETS, "rdap-bootstrap.json"), encoding="utf-8") as fh:
+                _BOOT = json.load(fh)
+        except Exception:
+            _BOOT = {}
+    return _BOOT
+
+def _asn_base(asn):
+    for svc in _boot().get("asn", []):
+        try:
+            ranges, urls = svc[0], svc[1]
+        except Exception:
+            continue
+        for r in ranges:
+            dash = str(r).find("-")
+            try:
+                lo = int(r if dash < 0 else r[:dash])
+                hi = int(r if dash < 0 else r[dash + 1:])
+            except ValueError:
+                continue
+            if lo <= asn <= hi:
+                for u in urls:
+                    if isinstance(u, str) and u.startswith("https://"):
+                        return u if u.endswith("/") else u + "/"
+    return None
+
+def _vcard(e):
+    arr = e.get("vcardArray")
+    fn = kind = None
+    if isinstance(arr, list) and len(arr) > 1 and isinstance(arr[1], list):
+        for it in arr[1]:
+            if not isinstance(it, list) or len(it) < 4:
+                continue
+            if it[0] == "fn":
+                fn = it[3] if isinstance(it[3], str) else (" ".join(map(str, it[3])) if isinstance(it[3], list) else None)
+            elif it[0] == "kind":
+                kind = it[3]
+    return fn, kind
+
+def _collect_entities(d):
+    acc = []
+    def walk(ents, depth):
+        for e in ents or []:
+            if not isinstance(e, dict):
+                continue
+            roles = [r for r in (e.get("roles") or []) if isinstance(r, str)]
+            fn, kind = _vcard(e)
+            acc.append({"roles": roles, "name": str(fn or e.get("handle") or (roles[0] if roles else "?")), "kind": kind})
+            if depth < 1:
+                walk(e.get("entities"), depth + 1)
+    walk(d.get("entities"), 0)
+    seen, out = set(), []
+    for a in acc:
+        k = (a["name"], tuple(a["roles"]))
+        if k in seen:
+            continue
+        seen.add(k)
+        out.append(a)
+    out.sort(key=lambda a: 0 if a["roles"] else 1)   # 有角色的优先(稳定排序保留发现顺序)
+    return out[:5]
+
+def _rdap_asn(asn):
+    """返回 [{roles,name,kind}, …](≤5); 失败/无 → []。独立长 TTL 磁盘缓存(autnum-<n>.json)。"""
+    try:
+        a = int(asn)
+    except (TypeError, ValueError):
+        return []
+    try:
+        os.makedirs(os.path.join(CACHE, "rdap"), exist_ok=True)
+    except OSError:
+        pass
+    cf = os.path.join(CACHE, "rdap", f"autnum-{a}.json")
+    try:
+        age = time.time() - os.path.getmtime(cf)
+        with open(cf, encoding="utf-8") as fh:
+            obj = json.load(fh)
+        if age < (RDAP_TTL if obj.get("ents") else RDAP_NEG_TTL):
+            return obj.get("ents", [])
+    except Exception:
+        pass
+    ents = []
+    base = _asn_base(a)
+    if base:
+        try:
+            req = urllib.request.Request(
+                base + f"autnum/{a}",
+                headers={"Accept": "application/rdap+json", "User-Agent": "peer.as-og/1.0"})
+            with urllib.request.urlopen(req, timeout=RDAP_TIMEOUT) as r:
+                ents = _collect_entities(json.load(r))
+        except Exception:
+            ents = []
+    try:
+        with open(cf, "w", encoding="utf-8") as fh:
+            json.dump({"ents": ents}, fh, ensure_ascii=False)
+    except OSError:
+        pass
+    return ents
+
+# ── 图标(预栅格 FA alpha mask, tint 成角色色)─────────────────────────────────────────────
+_icons = {}
+def _icon(name, size, color):
+    k = (name, size, color)
+    if k in _icons:
+        return _icons[k]
+    col = None
+    try:
+        im = Image.open(os.path.join(ASSETS, "og-icons", f"{name}.png")).convert("RGBA").resize((size, size), Image.LANCZOS)
+        col = Image.new("RGBA", (size, size), color + (255,))
+        col.putalpha(im.split()[3])
+    except Exception:
+        col = None
+    _icons[k] = col
+    return col
+
+def _role_icon_name(roles, kind):
+    if "abuse" in roles:
+        return "shield"
+    if kind in ("org", "group"):
+        return "users"
+    return "user"
+
+def _draw_whois(img, dr, asn):
+    ents = _rdap_asn(asn)
+    if not ents:
+        return
+    x = WH_X
+    n = min(len(ents), 5)
+    dr.line([(x - 26, 150), (x - 26, 176 + n * 64)], fill=LINE, width=2)
+    dr.text((x, 150), "REGISTRY", font=_font("lr", 24), fill=MUTED)
+    tx = x + 38
+    maxw = W - 64 - tx
+    y = 192
+    for e in ents[:5]:
+        roles = e["roles"]
+        color = SIGNAL if "abuse" in roles else ACCENT
+        ic = _icon(_role_icon_name(roles, e["kind"]), 26, color)
+        if ic:
+            img.paste(ic, (x, y + 6), ic)
+        label = " · ".join(ROLE_LABEL.get(r, r) for r in roles) or "contact"
+        dr.text((tx, y), label.upper(), font=_font("lr", 20), fill=color)
+        nf = font_for(e["name"], True, 28)
+        dr.text((tx, y + 24), _truncate(dr, e["name"], nf, maxw), font=nf, fill=FG)
+        y += 64
+
+
 def render_asn(asn):
     counts = load("seo/asn.json").get(asn)
     if counts is None and asn not in load("asnames.json"):
@@ -169,16 +338,23 @@ def render_asn(asn):
     v6 = counts[1] if counts else 0
     peers = counts[2] if counts and len(counts) > 2 else 0
     img, d = _base()
-    d.text((64, 132), f"AS{asn}", font=_font("lb", 150), fill=FG)
+    # 左栏收敛到右栏(WH_X)左侧, 给 WHOIS 让位。AS 号字号自适应以塞进左栏宽度。
+    left_w = WH_X - 64 - 24
+    asn_str = f"AS{asn}"
+    fs = 150
+    while fs > 92 and d.textlength(asn_str, font=_font("lb", fs)) > left_w:
+        fs -= 4
+    d.text((64, 132), asn_str, font=_font("lb", fs), fill=FG)
     if name:
         nf = font_for(name, True, 60)
-        d.text((64, 300), _truncate(d, name, nf, W - 128), font=nf, fill=ACCENT)
+        d.text((64, 300), _truncate(d, name, nf, left_w), font=nf, fill=ACCENT)
     y = 408
-    gap = 80
+    gap = 60
     x = 64
     x += _pill(d, x, y, "IPv4 prefixes", _fmt(v4), FG) + gap
     x += _pill(d, x, y, "IPv6 prefixes", _fmt(v6), FG) + gap
     _pill(d, x, y, "Peers", _fmt(peers), ACCENT)
+    _draw_whois(img, d, asn)
     _stamp(d)
     return img
 

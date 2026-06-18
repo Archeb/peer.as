@@ -51,6 +51,15 @@ const asnData = () => (_asnP ??= loadJson('/data/seo/asn.json'))
 const asnames = () => (_asnamesP ??= loadJson('/data/asnames.json'))
 const assetData = () => (_assetP ??= loadJson('/data/seo/asset.json'))
 const netData = () => (_netP ??= loadJson('/data/seo/networks.json'))
+// 每 ASN top-N 通告前缀(ASN 落地页内链), 按 asn%256 分片 /data/seo/prefixes/<sh>.json = {asn:[[prefix,cc,n_paths],…]}。
+// 只按需读命中的那一片, 各片 promise 缓存在 isolate(避免重复拉)。缺片/旧数据 → 空列表(降级, 不列前缀)。
+const _pfxShards = new Map()
+function pfxShard(asn) {
+  const sh = (parseInt(asn, 10) || 0) % 256
+  let p = _pfxShards.get(sh)
+  if (!p) { p = loadJson(`/data/seo/prefixes/${sh}.json`); _pfxShards.set(sh, p) }
+  return p
+}
 
 // ── 小工具 ───────────────────────────────────────────────────────────
 function esc(s) {
@@ -91,11 +100,12 @@ async function renderRoute(r, lang, brand, env, base) {
     return { body: render(EntrySeo, { props: { lang, page: r.page, brand } }).body }
   }
   if (r.kind === 'asn') {
-    const [counts, names] = await Promise.all([asnData(), asnames()])
+    const [counts, names, shard] = await Promise.all([asnData(), asnames(), pfxShard(r.asn)])
     const c = counts && counts[r.asn]
     const name = (names && names[r.asn]) || ''
     if (!c && !name) return null   // 未知 ASN -> 交给 SPA(可能是新数据/前缀误配)
-    const props = { lang, asn: r.asn, name, nameEn: name, v4: (c && c[0]) || 0, v6: (c && c[1]) || 0, peers: (c && c[2]) || 0, brand }
+    const prefixes = (shard && shard[r.asn]) || []
+    const props = { lang, asn: r.asn, name, nameEn: name, v4: (c && c[0]) || 0, v6: (c && c[1]) || 0, peers: (c && c[2]) || 0, prefixes, brand }
     return { body: render(AsnSeo, { props }).body }
   }
   if (r.kind === 'asset') {
@@ -203,6 +213,13 @@ html[data-theme=ba] #seo-shell{
 #seo-shell .seo-facts span{opacity:.65;font-size:.8rem}
 #seo-shell .seo-facts b{font-size:1.3rem}
 #seo-shell .seo-members{display:flex;flex-wrap:wrap;gap:6px 12px;padding:0;list-style:none;margin:.6em 0}
+#seo-shell .seo-prefixes{margin:1.6em 0 0}
+#seo-shell .seo-prefixes h2{font-size:1.05rem;font-weight:700;margin:0 0 .5em}
+#seo-shell .seo-pfxlist{list-style:none;padding:0;margin:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:2px 18px}
+#seo-shell .seo-pfxlist li{display:flex;justify-content:space-between;gap:10px;padding:3px 0;border-bottom:1px solid var(--line2);font-family:var(--mono);font-size:.86rem;overflow:hidden;white-space:nowrap}
+#seo-shell .seo-pfxlist a{text-overflow:ellipsis;overflow:hidden}
+#seo-shell .seo-pfxlist .cc{color:var(--muted);font-size:.78rem;flex:0 0 auto}
+#seo-shell .seo-more{margin:.9em 0 0;font-size:.9rem}
 #seo-shell a{color:var(--link)}
 /* 加载罩(人类看到的;复用 app .boot 观感: mono + accent spinner, 全屏不透明盖住 bot 层) */
 #seo-shell .seo-load{position:fixed;inset:0;z-index:1;display:flex;align-items:center;justify-content:center;gap:10px;

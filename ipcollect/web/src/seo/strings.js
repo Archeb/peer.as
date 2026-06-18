@@ -22,6 +22,8 @@ export function asnText(lang, d) {
     v6label: zh ? 'IPv6 前缀' : 'IPv6 prefixes',
     peerLabel: zh ? '邻居(Peers)' : 'Peers',
     orgLabel: zh ? '运营组织' : 'Organization',
+    prefixesLabel: zh ? `AS${d.asn} 通告的前缀` : `Prefixes announced by AS${d.asn}`,
+    prefixesMore: zh ? `在 ${brand} 查看全部 ${total} 个前缀 →` : `View all ${total} prefixes on ${brand} →`,
     summary: zh
       ? `自治系统 AS${d.asn}${nm ? `(${nm})` : ''} 在全球 BGP 路由表中作为 origin 通告 `
         + `${d.v4 || 0} 个 IPv4 前缀和 ${d.v6 || 0} 个 IPv6 前缀(共 ${total} 个),观测到 ${peers} 个邻居(peers)。`

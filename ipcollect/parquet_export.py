@@ -864,6 +864,34 @@ def export(cfg: dict, con, out_dir: str = "dist") -> dict:
         (seo / "asn.json").write_text(
             json.dumps(asn_seo, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
         seo_asns = list(asn_seo.keys())
+        # prefixes/<asn%256>.json: 每 ASN top-N(按 n_paths 降序)通告前缀, 供 ASN 落地页列出内链(/<prefix>),
+        # 让爬虫在 ASN 页就把该网络的前缀 URL 一并抓走。读 byorigin{,_v6}(pathsearch 精简版, 无 paths_blob)。
+        # 按 asn 取模分 256 片: worker 只按需读 1 片(isolate 内缓存), 文件数对 CF Pages 2万上限无压力。
+        try:
+            bo_dirs = [f"{pq}/byorigin{fam_results[f]['suffix']}"
+                       for f in families if (pq / f"byorigin{fam_results[f]['suffix']}").exists()]
+            if bo_dirs:
+                seo_pfx_topn = 100
+                union = " UNION ALL ".join(
+                    f"SELECT DISTINCT origin_asn, prefix, COALESCE(cc,'ZZ') AS cc, n_paths "
+                    f"FROM read_parquet('{d}/*.parquet') WHERE origin_asn IS NOT NULL" for d in bo_dirs)
+                prows = con.execute(f"""
+                    WITH allpfx AS ({union})
+                    SELECT origin_asn, prefix, cc, n_paths FROM allpfx
+                    QUALIFY ROW_NUMBER() OVER (PARTITION BY origin_asn ORDER BY n_paths DESC, prefix) <= {seo_pfx_topn}
+                    ORDER BY origin_asn""").fetchall()
+                pfx_shards: dict = {}
+                for a, p, cc, npaths in prows:
+                    pfx_shards.setdefault(int(a) % 256, {}).setdefault(
+                        str(int(a)), []).append([p, cc, int(npaths or 0)])
+                pfx_dir = seo / "prefixes"
+                pfx_dir.mkdir(parents=True, exist_ok=True)
+                for sh, obj in pfx_shards.items():
+                    (pfx_dir / f"{sh}.json").write_text(
+                        json.dumps(obj, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+                util.log(f"  SEO 数据: prefixes/ {len(prows)} 条 / {len(pfx_shards)} 片 (每 ASN top{seo_pfx_topn})")
+        except Exception as e:  # noqa  前缀分片失败只降级(ASN 页不列前缀, 其余 SEO 不受影响)
+            util.log(f"  ! SEO prefixes 导出失败, 降级(ASN 页不列前缀): {e}", err=True)
         # asset.json: {set_key: {s:source, n:name, d:descr(截断), c:n_members, m:[成员样本 ≤20]}}
         if has_asset:
             arows = con.execute("""
