@@ -13,6 +13,7 @@
   GET /og/asset.png?k=<url-encoded set_key>
   GET /og/home.png            品牌通用卡(入口页用)
 """
+import datetime
 import io
 import json
 import os
@@ -24,8 +25,10 @@ from urllib.parse import parse_qs, urlparse
 
 from PIL import Image, ImageDraw, ImageFont
 
+# CACHE 必须在 rsync 同步树(/var/www/cn)之外 —— 否则 deploy.sh 的 `rsync --delete` 会把它清掉。
+# 用 systemd CacheDirectory(/var/cache/og-renderer, 属 www-data)。
 DATA = os.environ.get("OG_DATA", "/var/www/cn/data")
-CACHE = os.environ.get("OG_CACHE", "/var/www/cn/og-cache")
+CACHE = os.environ.get("OG_CACHE", "/var/cache/og-renderer")
 PORT = int(os.environ.get("OG_PORT", "8092"))
 W, H = 1200, 630
 
@@ -36,7 +39,10 @@ ACCENT = (91, 157, 255) # #5b9dff
 CARD = (18, 24, 38)
 LINE = (30, 38, 56)
 
-os.makedirs(CACHE, exist_ok=True)
+try:
+    os.makedirs(CACHE, exist_ok=True)
+except OSError:
+    pass  # 缓存目录不可建 -> 降级为不缓存(render 内写缓存也都各自 try),不让服务起不来
 
 
 # ── 字体:拉丁用 Noto Sans,中文用 Noto Sans CJK SC(经 fc-match 取确切 file+index)──────────
@@ -90,7 +96,7 @@ def load(name):
 
 def data_mtime():
     t = 0.0
-    for n in ("seo/asn.json", "seo/asset.json", "asnames.json"):
+    for n in ("seo/asn.json", "seo/asset.json", "asnames.json", "meta.json"):
         try:
             t = max(t, os.path.getmtime(os.path.join(DATA, n)))
         except OSError:
@@ -110,8 +116,6 @@ def _base():
     tag = "BGP · IP · ASN Insights"
     tw = d.textlength(tag, font=_font("lr", 26))
     d.text((W - 64 - tw, 66), tag, font=_font("lr", 26), fill=MUTED)
-    # 底部细线 + 域名
-    d.line([(64, H - 96), (W - 64, H - 96)], fill=LINE, width=2)
     return img, d
 
 def _truncate(d, s, fnt, maxw):
@@ -127,10 +131,28 @@ def _fmt(n):
     except Exception:
         return str(n)
 
-def _footer(d, right):
-    d.text((64, H - 78), "peer.as", font=_font("lb", 30), fill=FG)
-    rw = d.textlength(right, font=_font("lr", 26))
-    d.text((W - 64 - rw, H - 74), right, font=_font("lr", 26), fill=MUTED)
+def data_label():
+    # 右下角时间 = 生成时所依赖的**最新采集点快照时刻**(meta.collectors[].snap_ts 取最大;
+    # 各采集点发布周期不同故时龄不齐,取最新代表"数据至少新到这个时刻")。缺则回退 generated_ts。
+    try:
+        meta = load("meta.json")
+        cols = meta.get("collectors") or []
+        ts = max((c.get("snap_ts") or 0) for c in cols) if cols else 0
+        ts = ts or meta.get("generated_ts") or 0
+        if not ts:
+            return ""
+        return datetime.datetime.fromtimestamp(int(ts), datetime.timezone.utc).strftime(
+            "Data as of %Y-%m-%d %H:%M UTC")
+    except Exception:
+        return ""
+
+def _stamp(d):
+    s = data_label()
+    if not s:
+        return
+    f = _font("lr", 24)
+    w = d.textlength(s, font=f)
+    d.text((W - 64 - w, H - 52), s, font=f, fill=MUTED)
 
 def _pill(d, x, y, label, value, vcolor):
     lf, vf = _font("lr", 26), _font("lb", 48)
@@ -145,15 +167,19 @@ def render_asn(asn):
     name = load("asnames.json").get(asn, "")
     v4 = counts[0] if counts else 0
     v6 = counts[1] if counts else 0
+    peers = counts[2] if counts and len(counts) > 2 else 0
     img, d = _base()
-    d.text((64, 168), f"AS{asn}", font=_font("lb", 150), fill=FG)
+    d.text((64, 132), f"AS{asn}", font=_font("lb", 150), fill=FG)
     if name:
         nf = font_for(name, True, 60)
-        d.text((64, 338), _truncate(d, name, nf, W - 128), font=nf, fill=ACCENT)
-    y = 432
-    x = _pill(d, 64, y, "IPv4 prefixes", _fmt(v4), FG)
-    _pill(d, 64 + x + 90, y, "IPv6 prefixes", _fmt(v6), FG)
-    _footer(d, "Global backhaul BGP / AS_PATH")
+        d.text((64, 300), _truncate(d, name, nf, W - 128), font=nf, fill=ACCENT)
+    y = 408
+    gap = 80
+    x = 64
+    x += _pill(d, x, y, "IPv4 prefixes", _fmt(v4), FG) + gap
+    x += _pill(d, x, y, "IPv6 prefixes", _fmt(v6), FG) + gap
+    _pill(d, x, y, "Peers", _fmt(peers), ACCENT)
+    _stamp(d)
     return img
 
 def render_asset(key):
@@ -161,27 +187,27 @@ def render_asset(key):
     if a is None:
         return None
     img, d = _base()
-    d.text((64, 150), "AS-SET", font=_font("lb", 40), fill=MUTED)
+    d.text((64, 132), "AS-SET", font=_font("lb", 40), fill=MUTED)
     kf = font_for(key, True, 92)
-    d.text((64, 200), _truncate(d, key, kf, W - 128), font=kf, fill=FG)
+    d.text((64, 186), _truncate(d, key, kf, W - 128), font=kf, fill=FG)
     descr = a.get("d") or ""
     if descr:
         df = font_for(descr, False, 34)
-        d.text((64, 332), _truncate(d, descr, df, W - 128), font=df, fill=MUTED)
-    y = 432
+        d.text((64, 312), _truncate(d, descr, df, W - 128), font=df, fill=MUTED)
+    y = 408
     x = _pill(d, 64, y, "Direct members", _fmt(a.get("c", 0)), ACCENT)
     if a.get("s"):
-        _pill(d, 64 + x + 90, y, "Registered in", str(a["s"]), FG)
-    _footer(d, "IRR as-set · customer cone")
+        _pill(d, 64 + x + 80, y, "Registered in", str(a["s"]), FG)
+    _stamp(d)
     return img
 
 def render_home():
     img, d = _base()
-    d.text((64, 210), "Global BGP, IP &", font=_font("lb", 96), fill=FG)
-    d.text((64, 318), "ASN Insights", font=_font("lb", 96), fill=ACCENT)
+    d.text((64, 188), "Global BGP, IP &", font=_font("lb", 96), fill=FG)
+    d.text((64, 296), "ASN Insights", font=_font("lb", 96), fill=ACCENT)
     sub = "Look up any IP prefix, ASN, AS_PATH, origin & peering"
-    d.text((64, 452), sub, font=_font("lr", 36), fill=MUTED)
-    _footer(d, "static · reproducible · BGP looking glass")
+    d.text((64, 430), sub, font=_font("lr", 36), fill=MUTED)
+    _stamp(d)
     return img
 
 

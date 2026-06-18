@@ -4,12 +4,15 @@ After=network.target
 
 [Service]
 ExecStart=/usr/bin/python3 /opt/og-renderer/og-renderer.py
-Environment=OG_DATA=/var/www/cn/data OG_CACHE=/var/www/cn/og-cache OG_PORT=8092
+Environment=OG_DATA=/var/www/cn/data OG_CACHE=/var/cache/og-renderer OG_PORT=8092
 Restart=on-failure
 RestartSec=2
-# 只监听 127.0.0.1(Caddy 反代),以 www-data 跑;缓存目录需 chown www-data。
+# 只监听 127.0.0.1(Caddy 反代),以 www-data 跑。
+# 缓存放 CacheDirectory(/var/cache/og-renderer,systemd 自动建+属 www-data),
+# **不要**放 /var/www/cn —— 那是 deploy.sh rsync --delete 的同步树,会被清掉。
 User=www-data
 Group=www-data
+CacheDirectory=og-renderer
 NoNewPrivileges=yes
 PrivateTmp=yes
 ProtectHome=yes

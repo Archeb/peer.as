@@ -842,7 +842,14 @@ def export(cfg: dict, con, out_dir: str = "dist") -> dict:
     try:
         seo = data / "seo"
         seo.mkdir(parents=True, exist_ok=True)
-        # asn.json: {asn: [n_v4, n_v6]} —— 优先读刚写出的 origin_counts parquet, 缺则现算。
+        # 每 ASN 邻居(peer)数 —— 读刚写出的 asn_neigh parquet 每 asn 行数(= 不同邻居数)。供 OG 大图展示。
+        peers_seo: dict = {}
+        if has_asn_neigh:
+            for a, c in con.execute(
+                    f"SELECT asn, count(*) FROM read_parquet('{pq}/asn_neigh/*.parquet') GROUP BY asn").fetchall():
+                if a is not None:
+                    peers_seo[str(int(a))] = int(c)
+        # asn.json: {asn: [n_v4, n_v6, n_peers]} —— 优先读刚写出的 origin_counts parquet, 缺则现算。
         if has_origin_counts:
             rows = con.execute(
                 f"SELECT origin_asn, n_v4, n_v6 FROM read_parquet('{pq}/origin_counts/*.parquet') ORDER BY origin_asn").fetchall()
@@ -851,7 +858,8 @@ def export(cfg: dict, con, out_dir: str = "dist") -> dict:
                 "SELECT origin_asn, count(DISTINCT pid) FILTER (WHERE family=4)::BIGINT, "
                 "count(DISTINCT pid) FILTER (WHERE family=6)::BIGINT FROM pathobs "
                 "WHERE origin_asn IS NOT NULL GROUP BY origin_asn ORDER BY origin_asn").fetchall()
-        asn_seo = {str(int(a)): [int(v4 or 0), int(v6 or 0)] for a, v4, v6 in rows if a is not None}
+        asn_seo = {str(int(a)): [int(v4 or 0), int(v6 or 0), peers_seo.get(str(int(a)), 0)]
+                   for a, v4, v6 in rows if a is not None}
         (seo / "asn.json").write_text(
             json.dumps(asn_seo, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
         seo_asns = list(asn_seo.keys())
