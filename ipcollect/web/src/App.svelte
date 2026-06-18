@@ -27,7 +27,7 @@
   // 无详情时回落默认页标题。随详情状态 + 语言响应式变化(与 queries.js 的 go() pushState 同源, 故历史项标题对应正确)。
   function pageTitle() {
     const B = brand.main + brand.hi
-    if (S.view === 'whois') return `${S.whois?.input ? S.whois.input + ' · ' : ''}WHOIS · ${B}`
+    // 详情子页(prefix/asn/domain): 对象名 · 品牌。trace 浮窗里开 insight 也命中, 故先于各视图落地页判定。
     if (S.detailKind === 'prefix' && S.insight?.prefix) return `${S.insight.prefix} · ${B}`
     if (S.detailKind === 'asn' && S.asnView) {
       const n = S.asnView.name
@@ -35,6 +35,15 @@
     }
     if (S.detailKind === 'domain' && S.domainView?.domain) return `${S.domainView.domain} · ${B}`
     if (S.mode === 'dns' && S.dns?.domain) return `${S.dns.domain} · ${B}`   // 移动端无右侧面板时仍用域名
+    if (S.mode === 'asset' && (S.asset?.key || S.asset?.input)) return `${S.asset.key || S.asset.input} · ${B}`
+    // 各视图落地页标题:首页用品牌默认标题(不带 WHOIS); 其余三页带 "<名称> · 品牌"。
+    if (S.view === 'whois') {
+      if (S.whois?.input) return `${S.whois.input} · WHOIS · ${B}`   // WHOIS 查询结果(非首页, 仍标 WHOIS)
+      if (S.probeExpanded) return `${t('nav_probe')} · ${B}`         // IP 探测落地页
+      return t('page_title')                                        // 首页(去掉 WHOIS)
+    }
+    if (S.view === 'trace') return `${t('nav_trace')} · ${B}`        // 环球网测落地页
+    if (S.view === 'routing') return `${t('nav_routing')} · ${B}`    // 路由分析落地页
     return t('page_title')
   }
 
