@@ -61,7 +61,7 @@ export function placeLabel(province, city, cc) {
 // 国家/地区名覆盖(必须先于 Intl.DisplayNames): CN/TW/HK/MO 的规范表述。
 const CC_OVERRIDE = {
   zh: { CN: '中国大陆', TW: '中国台湾', MO: '中国澳门', HK: '中国香港' },
-  en: { CN: 'Chinese Mainland', TW: 'Taiwan, China', MO: 'Macao', HK: 'Hong Kong' },
+  en: { CN: 'Chinese Mainland', TW: 'Taiwan, China', MO: 'Macao, China', HK: 'Hong Kong, China' },
 }
 let _region = {}
 export function regionName(cc) {

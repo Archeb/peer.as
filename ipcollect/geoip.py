@@ -406,7 +406,7 @@ def build_geo(con, cfg: dict, geolite: Optional[dict] = None) -> dict:
 
     # country_dim: cc -> 中/英文名(覆盖 CN/TW/HK/MO 规范名, 与前端一致)
     country_zh.update({"CN": "中国大陆", "TW": "中国台湾", "MO": "中国澳门", "HK": "中国香港"})
-    country_en.update({"CN": "Chinese Mainland", "TW": "Taiwan, China", "MO": "Macao", "HK": "Hong Kong"})
+    country_en.update({"CN": "Chinese Mainland", "TW": "Taiwan, China", "MO": "Macao, China", "HK": "Hong Kong, China"})
     con.execute("DROP TABLE IF EXISTS country_dim;")
     con.execute("CREATE TABLE country_dim(cc VARCHAR, name_zh VARCHAR, name_en VARCHAR);")
     rows = [(cc, country_zh.get(cc), country_en.get(cc))
