@@ -1,0 +1,18 @@
+[Unit]
+Description=peer.as OG image renderer (Pillow; Caddy reverse_proxies /og/* here)
+After=network.target
+
+[Service]
+ExecStart=/usr/bin/python3 /opt/og-renderer/og-renderer.py
+Environment=OG_DATA=/var/www/cn/data OG_CACHE=/var/www/cn/og-cache OG_PORT=8092
+Restart=on-failure
+RestartSec=2
+# 只监听 127.0.0.1(Caddy 反代),以 www-data 跑;缓存目录需 chown www-data。
+User=www-data
+Group=www-data
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+
+[Install]
+WantedBy=multi-user.target

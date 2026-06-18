@@ -103,6 +103,13 @@
 			respond 403
 		}
 
+		# OG 大图: 反代到本机 Pillow 渲染器(og-renderer.service, /og/asn.png?n= 等)。
+		# 在 try_files 之前, 不被 SPA 回退吞掉。renderer 自带磁盘缓存 + Cache-Control。
+		@og path /og/*
+		handle @og {
+			reverse_proxy 127.0.0.1:8092
+		}
+
 		# SPA 回退: 客户端路由(/4842、/1.1.1.0/24 等)缺失路径回退 index.html(前端 JS 解析)。真实文件原样服务。
 		try_files {path} /index.html
 		file_server
@@ -119,4 +126,23 @@ peer.as {
 	# peer.as 用 DNS-01 手动签发的证书(见顶部说明); 不走 ACME(HTTP-01 会失败)。
 	tls /etc/caddy/certs/peer.as.crt /etc/caddy/certs/peer.as.key
 	import site
+}
+
+# ── 字面 IPv6 自助探测端点 ───────────────────────────────────────────
+# 目的: 不走 DNS、用字面 v6 地址直连本机, 返回"客户端看到的 IP"(纯文本)。
+# 即便 DNS 的 AAAA 被污染/屏蔽, 浏览器仍能凭字面地址拿到真实 v6 出口 → 暴露"AAAA 被屏蔽"。
+# 证书: Let's Encrypt shortlived IP 证书(仅 http-01/tls-alpn-01; ~160h, Caddy 自动续)。CORS 用 * 放行。
+2605:52c0:2:1d:be24:11ff:fe22:251b {
+	tls {
+		issuer acme {
+			profile shortlived
+		}
+	}
+	header {
+		Access-Control-Allow-Origin "*"
+		Content-Type "text/plain; charset=utf-8"
+		Cache-Control "no-store"
+		defer
+	}
+	respond "{client_ip}" 200
 }

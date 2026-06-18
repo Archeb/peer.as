@@ -83,12 +83,20 @@ async function renderRoute(r, lang, brand, env, base) {
 }
 
 // 注入到 index.html 外壳。tpl=原始 index.html 文本。jsonld=已构建的 schema.org 对象(随路由类型而异)。
-function injectShell(tpl, { body, lang, title, desc, canonical, jsonld }) {
+function injectShell(tpl, { body, lang, title, desc, canonical, jsonld, ogImage }) {
   const htmlLang = lang === 'zh' ? 'zh-CN' : 'en'
   const sep = canonical.includes('?') ? '&' : '?'
   const altZh = esc(canonical + sep + 'lang=zh')
   const altEn = esc(canonical + sep + 'lang=en')
   const ld = jsonld
+  // og:image -> CN VPS 的 Pillow 渲染器(cn.peer.as/og/*),社交平台分享时显示 ASN/AS-SET 大图卡。
+  const img = ogImage
+    ? `<meta property="og:image" content="${esc(ogImage)}"/>` +
+      `<meta property="og:image:width" content="1200"/>` +
+      `<meta property="og:image:height" content="630"/>` +
+      `<meta property="og:image:type" content="image/png"/>` +
+      `<meta name="twitter:image" content="${esc(ogImage)}"/>`
+    : ''
   const headExtra =
     `<link rel="alternate" hreflang="zh" href="${altZh}"/>` +
     `<link rel="alternate" hreflang="en" href="${altEn}"/>` +
@@ -96,6 +104,8 @@ function injectShell(tpl, { body, lang, title, desc, canonical, jsonld }) {
     `<meta property="og:title" content="${esc(title)}"/>` +
     `<meta property="og:description" content="${esc(desc)}"/>` +
     `<meta property="og:url" content="${esc(canonical)}"/>` +
+    img +
+    (ogImage ? `<meta name="twitter:card" content="summary_large_image"/>` : '') +
     `<script type="application/ld+json">${JSON.stringify(ld).replace(/</g, '\\u003c')}</script>`
 
   let out = tpl
@@ -106,8 +116,9 @@ function injectShell(tpl, { body, lang, title, desc, canonical, jsonld }) {
     out = out.replace(/<link\s+rel=["']canonical["'][^>]*>/i, `<link rel="canonical" href="${esc(canonical)}"/>`)
   else
     out = out.replace(/<\/head>/i, `<link rel="canonical" href="${esc(canonical)}"/></head>`)
-  // og:title/og:description 外壳里已有静态版 -> 先删,避免重复(只删 og:title/description/url)。
-  out = out.replace(/<meta\s+property=["']og:(title|description|url)["'][^>]*>/gi, '')
+  // 外壳静态版 og:* / twitter:card 先删,避免与本页注入的重复。
+  out = out.replace(/<meta\s+property=["']og:(title|description|url|image)["'][^>]*>/gi, '')
+  if (ogImage) out = out.replace(/<meta\s+name=["']twitter:card["'][^>]*>/gi, '')
   // 外壳静态 hreflang(首页有 zh/en)也先删,避免与本页注入的 hreflang 重复。
   out = out.replace(/<link\s+rel=["']alternate["'][^>]*hreflang=[^>]*>/gi, '')
   out = out.replace(/<\/head>/i, `${headExtra}</head>`)
@@ -197,10 +208,19 @@ export default {
             url: canonical, inLanguage: htmlLang, isPartOf: site, variableMeasured: vars }] }
       }
 
+      // og:image -> CN VPS 的 Pillow 渲染器(peeras only; dn42 无该渲染器 -> 不出图)。
+      let ogImage = null
+      if (cHost === 'peer.as') {
+        const OG = 'https://cn.peer.as/og'
+        if (r.kind === 'asn') ogImage = `${OG}/asn.png?n=${r.asn}`
+        else if (r.kind === 'asset') ogImage = `${OG}/asset.png?k=${encodeURIComponent(r.key)}`
+        else ogImage = `${OG}/home.png`
+      }
+
       const tplRes = await env.ASSETS.fetch(new URL('/index.html', base))
       if (!tplRes || !tplRes.ok) return env.ASSETS.fetch(request)
       const tpl = await tplRes.text()
-      const html = injectShell(tpl, { body: rendered.body, lang, title, desc, canonical, jsonld })
+      const html = injectShell(tpl, { body: rendered.body, lang, title, desc, canonical, jsonld, ogImage })
 
       return new Response(html, {
         headers: {
