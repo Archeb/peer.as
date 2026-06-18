@@ -622,6 +622,7 @@ def export(cfg: dict, con, out_dir: str = "dist") -> dict:
     #   peeras-> APNIC autnums + config 注册表 + GeoLite org(asn_dim)。
     persons_meta: list = []
     asn_person_meta: dict = {}
+    asn_name_en: dict = {}   # OG 大图英文优先名(peeras: autnums handle + config name_en)
     if profile.site(cfg) == "dn42":
         from . import registry
         reg = registry.load(cfg)
@@ -634,6 +635,11 @@ def export(cfg: dict, con, out_dir: str = "dist") -> dict:
         for e in (cfg.get("asn_registry") or []):
             if str(e.get("asn", "")).isdigit() and e.get("name"):
                 asnames[int(e["asn"])] = e["name"]
+        # 英文优先名(OG 大图): autnums handle(英文) + config name_en 覆盖(若该 ASN 配了英文别名)。
+        asn_name_en = {a: autnums[a] for a in seen if a in autnums}
+        for e in (cfg.get("asn_registry") or []):
+            if str(e.get("asn", "")).isdigit() and e.get("name_en"):
+                asn_name_en[int(e["asn"])] = e["name_en"]
         asnorg = {}
         if con.execute("SELECT count(*) FROM information_schema.tables WHERE table_name='asn_dim'").fetchone()[0]:
             for a, o in con.execute("SELECT asn, org FROM asn_dim").fetchall():
@@ -641,6 +647,9 @@ def export(cfg: dict, con, out_dir: str = "dist") -> dict:
                     asnorg[str(int(a))] = o
     (data / "asnames.json").write_text(
         json.dumps({str(k): v for k, v in asnames.items()}, ensure_ascii=False, separators=(",", ":")),
+        encoding="utf-8")
+    (data / "asn_name_en.json").write_text(   # OG 大图英文优先名(peeras 为空则 dn42, 不影响)
+        json.dumps({str(k): v for k, v in asn_name_en.items()}, ensure_ascii=False, separators=(",", ":")),
         encoding="utf-8")
     (data / "asnorg.json").write_text(
         json.dumps(asnorg, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")

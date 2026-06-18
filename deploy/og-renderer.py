@@ -61,10 +61,11 @@ ROLE_LABEL = {"registrant": "registrant", "administrative": "admin", "technical"
 # ── 左下角国旗 ───────────────────────────────────────────────────────────────────────────
 # ASN 国家取自管线 seo/asn_cc.json(autnums 注册国 CC, 5 个 RIR 全覆盖、稳定; **不查 RDAP/WHOIS** —— RDAP
 # 仅 APNIC 返 country, 其余 RIR 要 WHOIS 且 AFRINIC/RIPE 还得从关联组织推断, 不可靠)。国旗用 flag-icons
-# 预栅格的 PNG(4x3)。与右下角数据时间同底线对齐。**TW 映射到 CN 旗**(显示口径)。
+# 预栅格的 PNG(4x3)。与右下角数据时间垂直居中。**TW 地区 ASN 不显示国旗**(显示口径)。
 FLAG_DIR = os.path.join(ASSETS, "og-icons", "flags")
 FLAG_H = 38
-FLAG_ALIAS = {"TW": "CN"}
+FLAG_HIDE = {"TW"}    # 这些 CC 不显示国旗
+FLAG_ALIAS = {}       # CC→旗 映射(扩展位; 当前无)
 PAD = 64        # 左右/底部统一 padding
 BOT = 64        # 底部 padding(与左右一致)
 
@@ -186,15 +187,19 @@ def _stamp(d):
     s = data_label()
     if not s:
         return
-    # 右下角数据时间: 底线对齐(anchor=rb), 与左下角国旗齐平; 下/右 padding 一致。
-    d.text((W - PAD, H - BOT), s, font=_font("lr", 24), fill=MUTED, anchor="rb")
+    # 右下角数据时间: 与左下角国旗**垂直居中对齐**(align-items:center)——两者中线同在 H-BOT-FLAG_H/2。
+    # 国旗底边 = H-BOT(下/右 padding 一致), 国旗较高故定行高, 文字居中其中。
+    d.text((W - PAD, H - BOT - FLAG_H // 2), s, font=_font("lr", 24), fill=MUTED, anchor="rm")
 
 # ── 国旗(左下角)──────────────────────────────────────────────────────────────────────────
 _flags = {}
 def _flag(cc):
     if not cc:
         return None
-    key = FLAG_ALIAS.get(str(cc).upper(), str(cc).upper()).lower()
+    up = str(cc).upper()
+    if up in FLAG_HIDE:        # TW 地区 ASN 不出旗
+        return None
+    key = FLAG_ALIAS.get(up, up).lower()
     if key in _flags:
         return _flags[key]
     im = None
@@ -366,22 +371,24 @@ def render_asn(asn):
     counts = load("seo/asn.json").get(asn)
     if counts is None and asn not in load("asnames.json"):
         return None
-    name = load("asnames.json").get(asn, "")
+    # AS 名首选英文(asn_name_en.json = autnums handle + config name_en), 回退 asnames.json(可能中文)。
+    name = load_opt("asn_name_en.json").get(asn) or load("asnames.json").get(asn, "")
     v4 = counts[0] if counts else 0
     v6 = counts[1] if counts else 0
     peers = counts[2] if counts and len(counts) > 2 else 0
     img, d = _base()
-    # 左栏收敛到右栏(WH_X)左侧, 给 WHOIS 让位。AS 号字号自适应以塞进左栏宽度。
-    left_w = WH_X - 64 - 24
+    # 左栏收敛到右栏(WH_X)左侧, 给 WHOIS 让位。AS 号顶部与右栏 REGISTRY(y=150)平齐;
+    # 字号较小(6 位 ASN 也不顶到右栏分隔线 WH_X-26), name 放大。
+    left_w = WH_X - 64 - 44       # 右留白加大, 防大 ASN 撞分隔线
     asn_str = f"AS{asn}"
-    fs = 150
-    while fs > 92 and d.textlength(asn_str, font=_font("lb", fs)) > left_w:
+    fs = 120
+    while fs > 80 and d.textlength(asn_str, font=_font("lb", fs)) > left_w:
         fs -= 4
-    d.text((64, 132), asn_str, font=_font("lb", fs), fill=FG)
+    d.text((64, 117), asn_str, font=_font("lb", fs), fill=FG)   # 字形顶与右栏 REGISTRY(y=150)对齐
     if name:
-        nf = font_for(name, True, 60)
-        d.text((64, 300), _truncate(d, name, nf, left_w), font=nf, fill=ACCENT)
-    y = 408
+        nf = font_for(name, True, 76)
+        d.text((64, 262), _truncate(d, name, nf, left_w), font=nf, fill=ACCENT)
+    y = 368
     gap = 60
     x = 64
     x += _pill(d, x, y, "IPv4 prefixes", _fmt(v4), FG) + gap
