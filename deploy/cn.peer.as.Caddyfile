@@ -110,13 +110,19 @@
 			reverse_proxy 127.0.0.1:8092
 		}
 
-		# /networks 国家分流目录由 CF Worker 渲染(双语, 非 SPA 路由)。本机无 Worker, 反代到 CF。
-		# 低频目录页, 经本机国际线尚可; canonical/链接均指向 peer.as, 用户后续点 ASN 仍回本站 SPA。
-		@networks path /networks /networks/*
-		handle @networks {
-			reverse_proxy https://bgp-insights.pages.dev {
-				header_up Host bgp-insights.pages.dev
-			}
+		# ── 边缘 SEO SSR: 落地页反代到本机自托管 SSR(peeras-ssr.service, 127.0.0.1:8788)─────
+		# 覆盖 worker matchRoute 的全部 SEO 路由: / · /<asn>(纯数字) · /asset/* · /networks[/​*] ·
+		# /advanced · /trace · /probe。其余(前缀 /1.1.1.0/24、/dns-query、/whois、/og、/data、/assets…)
+		# **不在此列** → 落到后面的静态/反代/SPA 回退, 行为不变。
+		# (取代旧的 /networks→bgp-insights.pages.dev 反代: CF 上 SSR 已默认关停, 那边只剩静态 SPA、
+		#  不再渲染目录页; 改由本机 SSR 统一出 /networks 及所有落地页。canonical 仍恒指 peer.as。)
+		# Host 透传(peer.as / cn.peer.as)→ wrapper 据此定品牌; 数据走服务内本地盘环回, 不跨源。
+		# CF for SaaS 回源带 Host=peer.as、SNI=peer.as(已实测), 故经 CF 的海外流量同样命中这里。
+		@seo {
+			path_regexp ^/(\d+|asset/.*|networks(/.*)?|advanced|trace|probe)?$
+		}
+		handle @seo {
+			reverse_proxy 127.0.0.1:8788
 		}
 
 		# SPA 回退: 客户端路由(/4842、/1.1.1.0/24 等)缺失路径回退 index.html(前端 JS 解析)。真实文件原样服务。
