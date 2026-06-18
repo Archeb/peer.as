@@ -117,7 +117,7 @@ function injectShell(tpl, { body, lang, title, desc, canonical, jsonld, ogImage,
   const altZh = esc(canonical + sep + 'lang=zh')
   const altEn = esc(canonical + sep + 'lang=en')
   const ld = jsonld
-  // og:image -> CN VPS 的 Pillow 渲染器(cn.peer.as/og/*),社交平台分享时显示 ASN/AS-SET 大图卡。
+  // og:image -> 本机 Pillow 渲染器(品牌域 peer.as/og/*),社交平台分享时显示 ASN/AS-SET 大图卡。
   const img = ogImage
     ? `<meta property="og:image" content="${esc(ogImage)}"/>` +
       `<meta property="og:image:width" content="1200"/>` +
@@ -400,10 +400,12 @@ export default {
             url: canonical, inLanguage: htmlLang, isPartOf: site, variableMeasured: vars }] }
       }
 
-      // og:image -> CN VPS 的 Pillow 渲染器(peeras only; dn42 无该渲染器 -> 不出图)。
+      // og:image -> 本机(CN VPS)的 Pillow 渲染器, 经品牌域 `/og/*`(Caddy 反代 127.0.0.1:8092)。
+      // 用 canonical 域(peer.as)而非 cn.peer.as: VPS 现在是唯一源, peer.as/og 经 CF for SaaS 还吃边缘缓存
+      // (社交爬虫全球更快; 实测出图 + cf-cache HIT)。peeras only; dn42 无该渲染器 -> 不出图。
       let ogImage = null
       if (cHost === 'peer.as') {
-        const OG = 'https://cn.peer.as/og'
+        const OG = `https://${cHost}/og`
         if (r.kind === 'asn') ogImage = `${OG}/asn.png?n=${r.asn}`
         else if (r.kind === 'asset') ogImage = `${OG}/asset.png?k=${encodeURIComponent(r.key)}`
         else ogImage = `${OG}/home.png`
