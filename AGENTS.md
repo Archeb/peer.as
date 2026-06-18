@@ -94,34 +94,41 @@
 1. dev worktree 改完 → `git add` **只加改的源文件**（**绝不 `git add -A`**：`public/data`/`duckdb-ext`/`.venv` 是本地 symlink，不该提交）→ commit。
 2. `git fetch origin` → 不能 ff（origin/main 被 dn42 推进、分叉）则 `git rebase origin/main`（可能撞 `AGENTS.md`/`db.js`）。
 3. `git push origin dev:main`。**GitOps 唯一真源 = `origin/main`；不 push 到 main，线上 ≤8h 被 cron 回滚。**
-4. **从主 checkout** `cd /home/aosc/test-ip-collect && scripts/deploy.sh`：只动前端→无 flag；改了数据/全重推→`--data`；只刷高频采集点(route-views2)→`--data-light`(增量, 需先 `--data` 打底过)。脚本自己 GitOps ff、`npm build`、数据闸校验、推 **CF(前端+数据) + CN(镜像)** 两端、末尾核两端入口一致。
-   - **绝不在缺 `.env` 的 worktree 跑 deploy.sh**（CN 凭据只在 `.env`，缺则 CN 静默跳过→两端不一致）；**绝不手敲 wrangler/rsync/手动 build**。
+4. **从主 checkout** `cd /home/aosc/test-ip-collect && scripts/deploy.sh`。**数据/前端已解耦(peeras)成两条独立流水线 + 各自独立锁(互不阻塞)**：
+   - **只动前端 → 无 flag**：`build`+`build-ssr` → 推**前端项目** `bgp-insights`(**不含 /data**) + CN 前端。秒级、永不被数据 cron 阻塞。
+   - **刷数据 → `--data`**(全量)/`--data-light`(增量, 需先 `--data` 打底)：`export-parquet` → 推**数据项目** `bgp-insights-data`(`data.peer.as`) + CN `/data`。**不碰前端**。
+   - 脚本自己 GitOps ff、数据闸校验、CF+CN 并行、末尾校验(前端核入口一致；数据核 `meta.version`)。
+   - **绝不在缺 `.env` 的 worktree 跑**（CN 凭据 + `VITE_DATA_BASE` 在 `.env`）；**绝不手敲 wrangler/rsync/手动 build**。
 5. 成功 = 日志末尾 `完成 ✅`。dn42 由其自己的 10min cron 自动同步，无需手动。
 
-> 纯文档/记忆类改动（如本文件）：走 1–3 即可，**不必跑 deploy.sh**（不进 dist、不影响站点）。
-> `scripts/deploy.sh` 是**唯一部署入口**（cron / 手动 / 开发全走它，结果一致）。flag：`--data` / `--no-build` / `--cf-only` / `--cn-only` / `--help`。
+> 纯文档/记忆类改动（如本文件）：走 1–3 即可，**不必跑 deploy.sh**。
+> `scripts/deploy.sh` 是**唯一部署入口**。flag：`--data` / `--data-light` / `--no-build` / `--cf-only` / `--cn-only` / `--help`。
 
-### 数据分发：同源 Pages + CN 整站镜像
+### 数据分发：数据/前端解耦的两个 CF Pages 项目 + CN 整站镜像
 
-**数据随前端一起部署到 CF Pages、海外同源 `/data`**（Pages 资产分发到全球边缘、就近返回、无回源）。数据宿主**按用户位置在 `web/src/lib/db.js` 的 `configure()` 运行时选**：
+**前端与数据是两个独立 Pages 项目**(2026-06-18 解耦，让前端/worker 部署不再被 8h/2h 数据 cron 阻塞)：
 
-- **海外 = 同源 `/data`**（CF Pages）。
-- **境内 = `cn.peer.as`**（CN 优化 VPS 整站镜像，见下「中国优化」），数据自带 `/data`。
-- **GeoDNS 把 peer.as 解到 CN 机器 / 本地 serve** = 同源（本机即正确源）。
+- **前端项目** `bgp-insights`(`peer.as`)：只含前端 + `_worker.js`，**不含 `/data`**。
+- **数据项目** `bgp-insights-data`(`data.peer.as`，CNAME→`bgp-insights-data.pages.dev`)：只含 `/data`(parquet/json/seo)，`_headers` 给 CORS `*` + 缓存(`deploy/data-headers`)。**同样 CF 边缘分发**(非单源，故不重蹈 R2 冷缓存覆辙)。
 
-`configure()` 逻辑：直连 cn.peer.as 或 `/cdn-cgi/trace` 404（GeoDNS→CN 机器/本地）⇒ 同源 edge=cn；CF 上 `loc=CN`（境内但 GeoDNS 没生效）⇒ 健康探测后切 cn.peer.as（带回退同源）；其余（海外 CF）⇒ 同源 edge=cf。wasm/worker 随构建打包（worker/JS API 始终同源；CF 节点大 wasm 回退 CDN）。
-**数据版本/缓存**：`meta.version` 驱动 `?v=` 失效（所有 parquet/asnames URL 带上，故可长缓存，`web/public/_headers` 管）；`meta.json` 自身 no-cache。
+数据宿主**按用户位置在 `web/src/lib/db.js` 的 `configure()` 运行时选**(`OVERSEAS`=`VITE_DATA_BASE`，默认 `data.peer.as/data`)：
+- **海外 = `data.peer.as`**(数据项目)。
+- **境内 = `cn.peer.as`**(CN VPS 整站镜像，自带 `/data`)。
+- **直连 cn.peer.as / GeoDNS→CN 机器 / 本地 serve = 同源 `/data`**(本机即正确源)。
+- 取数失败统一回退 `OVERSEAS`(data.peer.as)。`_worker.js`(peeras)也**跨源** fetch `data.peer.as`；dn42(无 cnMirror)仍同源，不碰 data.peer.as。
 
-> **曾短暂试过 R2（海外数据独立桶 `peer-as-data`），2026-06-15 当天回退**：CF Pages 是边缘分发，R2 自定义域名是单源拉取式缓存，**叠加 8h 数据刷新 + `?v=` 整批失效 + 低单点流量 → 每个 POP 基本都冷回源**，比 Pages 慢很多；而迁 R2 的唯一理由（Pages 25MiB/2万文件上限）当前未撞线（最大分片 ~19.5MB、943 文件）。**结论：留在 Pages**；将来某分片逼近 25MiB 时靠**切更细分片**（export 的 `*_FILE_SIZE` 旋钮）继续留 Pages，而非搬 R2。
+**数据版本/缓存**：`meta.version` 驱动 `?v=` 失效；`meta.json` no-cache。
+**CF Pages 限**(数据项目)：≤25MiB/文件、≤2万文件(当前 961 parquet / 最大分片 <25MiB)；逼近时用 export 的 `*_FILE_SIZE` 旋钮切更细分片。
+> 早期(2026-06-15)试过 R2 当天回退(单源拉取缓存→各 POP 冷回源慢)；现在的「第二个 Pages 项目」是多边缘分发，无此问题。`.env` 里 R2 时代遗留的 `VITE_DATA_BASE=peer-as-data.opentrace.app`(死域名)已改为 `data.peer.as`。
 
 ### 中国优化（cn.peer.as）
 
-CF Pages 在中国大陆慢（跨境限速/丢包）。方案：一台优化线路 VPS（Caddy）托管**与 peer.as 完全一致的整站**（前端 + 数据 + 自托管 DuckDB-WASM），`deploy.sh` 的 CN 步 rsync 整个 `dist/` 过去。GeoDNS 把境内 `peer.as` 解到本机（需本机有 peer.as 的 TLS 证书，LE 走 DNS-01）。
+CF Pages 在中国大陆慢（跨境限速/丢包）。方案：一台优化线路 VPS（Caddy）托管**与 peer.as 完全一致的整站**（前端 + 数据 + 自托管 DuckDB-WASM）。解耦后 `deploy.sh` 的 CN 步也分两路：`--data*` → rsync `dist/data` 到 `cn:/data`；前端部署 → rsync 其余(排除 `/data`)。GeoDNS 把境内 `peer.as` 解到本机（需本机有 peer.as 的 TLS 证书，LE 走 DNS-01）。Caddy 还反代 `/og/*`(本机 og-renderer)、`/networks*`(到 CF Worker)、DoH/WHOIS。
 DuckDB-WASM、Cache Storage 大 wasm 缓存、parquet 扩展自托管、全 GET 模式、Caddy 配置（CORS、关 h3、DoH/WHOIS 境内反代）等实现细节较多且稳定，**见 `web/src/lib/db.js` 与 `deploy/cn.peer.as.Caddyfile` 源码**，不在此复述。
 
 ### cron 自动刷新（全量 8h + 轻量 2h）
 
-`scripts/daily-refresh.sh`（fcron 薄封装）把参数**原样透传** deploy.sh（无参 = `--data` 全量）。两条 peeras cron 行：
+`scripts/daily-refresh.sh`（fcron 薄封装）把参数**原样透传** deploy.sh（无参 = `--data` 全量）。**解耦后 `--data*` 只刷数据项目(data.peer.as)+CN /data，不动前端**；前端随代码改动单独 `deploy.sh`(无 flag) 部署。两条 peeras cron 行：
 
 - **全量** `40 0,8,16 * * *  …/daily-refresh.sh`（每 8h，对齐 RIPE RIS bview UTC 00/08/16 + 40min）。
 - **轻量** `40 2,4,6,10,12,14,18,20,22 * * *  …/daily-refresh.sh --data-light`（其余偶数点 +40min，每 2h 刷 route-views2，对齐 RouteViews 2h RIB）。
