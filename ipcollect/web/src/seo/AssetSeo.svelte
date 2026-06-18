@@ -23,5 +23,4 @@
       {/each}
     </ul>
   {/if}
-  <p class="seo-cta">{x.cta}</p>
 </article>

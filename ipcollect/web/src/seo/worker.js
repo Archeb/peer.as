@@ -1,9 +1,13 @@
 // CF Pages Function(Advanced Mode `_worker.js`)—— 边缘同壳 SSR,给爬虫渲染 ASN / AS-SET / 入口落地页。
 //
-// 设计:
+// 设计(一份 HTML, 两类受众, 靠「盖」不靠「换」):
 //  - 命中 SEO 路由(/<asn>、/asset/<key>、/、/advanced、/trace、/probe)→ 取 SPA 外壳 index.html,
-//    本地化 <head>(title/description/canonical/hreflang/OG/JSON-LD)+ 注入 #seo-shell 内容块,返回完整 HTML。
-//    用户 JS 启动后 SPA 原地无缝接管(同 URL、同壳),main.js 在内容就绪后移除 #seo-shell。
+//    本地化 <head>(title/description/canonical/hreflang/OG/JSON-LD)+ 注入 #seo-shell,返回完整 HTML。
+//  - #seo-shell 内分两层:
+//      · .seo-bot  = 给爬虫读的真内容(h1/摘要/内链/事实)。正常渲染, **不 display:none**(不降权、非 cloaking)。
+//      · .seo-load = 不透明加载罩(复用 app .boot 观感: mono + accent spinner + 该路由的 cta 文案), 盖住 bot 层。
+//    → 人类只看到加载罩, 看不到任何机读内容; 不跑 JS 的爬虫直接读源码里的 bot 层拿到完整文案。
+//    用户 JS 启动后, App.svelte 在视图/数据就绪时移除整个 #seo-shell, 露出 SPA(同 URL、无跳转、loading→内容)。
 //  - 其余一切(前缀 /1.1.1.0/24、/dns、/whois、静态资源…)→ env.ASSETS.fetch 原样(含 CF SPA-200 回退)。
 //  - **全程 fail-safe**:任何异常 → env.ASSETS.fetch(request)。SSR 整层失效也只是退化为纯前端渲染。
 //  - 数据已与前端解耦:peeras 从 **data.peer.as 跨源** fetch(asnames.json + data/seo/*.json);
@@ -17,6 +21,11 @@ import AsnSeo from './AsnSeo.svelte'
 import AssetSeo from './AssetSeo.svelte'
 import EntrySeo from './EntrySeo.svelte'
 import { BRANDS } from './strings.js'
+import { iSpinner } from '../lib/icons.js'   // 复用 app 图标(纯 FA re-export, 零浏览器依赖)
+
+// 加载罩的 spinner: 直接取 app 的 faSpinner 路径, 内联成可旋转 SVG(复用 .boot 观感)。
+const [_SPW, _SPH, , , _SPD] = iSpinner.icon
+const SPINNER = `<svg viewBox="0 0 ${_SPW} ${_SPH}" fill="currentColor" aria-hidden="true"><path d="${_SPD}"/></svg>`
 
 // ── isolate 级缓存(promise) ──────────────────────────────────────────
 let _asnP, _asnamesP, _assetP, _netP, _ctx
@@ -92,7 +101,8 @@ async function renderRoute(r, lang, brand, env, base) {
 }
 
 // 注入到 index.html 外壳。tpl=原始 index.html 文本。jsonld=已构建的 schema.org 对象(随路由类型而异)。
-function injectShell(tpl, { body, lang, title, desc, canonical, jsonld, ogImage }) {
+// cta=加载罩里显示的本地化「正在加载…」文案(各路由自带, 见 strings.js)。
+function injectShell(tpl, { body, lang, title, desc, canonical, jsonld, ogImage, cta }) {
   const htmlLang = lang === 'zh' ? 'zh-CN' : 'en'
   const sep = canonical.includes('?') ? '&' : '?'
   const altZh = esc(canonical + sep + 'lang=zh')
@@ -131,8 +141,12 @@ function injectShell(tpl, { body, lang, title, desc, canonical, jsonld, ogImage 
   // 外壳静态 hreflang(首页有 zh/en)也先删,避免与本页注入的 hreflang 重复。
   out = out.replace(/<link\s+rel=["']alternate["'][^>]*hreflang=[^>]*>/gi, '')
   out = out.replace(/<\/head>/i, `${headExtra}</head>`)
-  // #seo-shell 覆盖层(全屏,主题深色;SPA 接管后由 main.js 移除)。放在 #app 之后、脚本之前。
-  const shell = `<div id="seo-shell">${SHELL_STYLE}<main class="seo-wrap">${body}</main></div>`
+  // #seo-shell 覆盖层(全屏;SPA 接管后由 App.svelte 移除)。放在 #app 之后、脚本之前。
+  // 两层: bot 内容(给爬虫) + 加载罩(给人类, 盖在上面)。
+  const shell = `<div id="seo-shell">${SHELL_STYLE}` +
+    `<div class="seo-bot"><main class="seo-wrap">${body}</main></div>` +
+    `<div class="seo-load" role="status" aria-live="polite">` +
+    `<span class="seo-spin">${SPINNER}</span><span>${esc(cta || '')}</span></div></div>`
   if (/<div id="app"><\/div>/i.test(out))
     out = out.replace(/<div id="app"><\/div>/i, `<div id="app"></div>${shell}`)
   else
@@ -140,25 +154,37 @@ function injectShell(tpl, { body, lang, title, desc, canonical, jsonld, ogImage 
   return out
 }
 
-// #seo-shell 内联样式:不依赖 app.css(异步加载),覆盖全屏、深色、内容居中可读。
+// #seo-shell 内联样式:不依赖 app.css(异步加载)。主题 token 取自 app.css 同一套(:root 默认亮、
+// prefers-color-scheme:dark / [data-theme] 切换), 故 bot 层与加载罩颜色与 app 一致, app.css 后到也不跳。
 const SHELL_STYLE = `<style>
-#seo-shell{position:fixed;inset:0;z-index:50;overflow:auto;background:#0a0e15;color:#dde6f0;
-font-family:system-ui,-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;line-height:1.6}
+#seo-shell{position:fixed;inset:0;z-index:50;
+--bg:#f6f8fa;--panel:#fff;--alt:#eef2f6;--line:#dce3ea;--line2:#e8edf2;--fg:#10212f;--muted:#5d6b7c;--accent:#0d9488;--link:#0b7285;
+--sans:system-ui,-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+--mono:ui-monospace,"SF Mono","Cascadia Code",Menlo,Consolas,"Liberation Mono",monospace}
+@media (prefers-color-scheme:dark){html:not([data-theme]) #seo-shell{
+--bg:#0a0e15;--panel:#0d131c;--alt:#111a26;--line:#1b2738;--line2:#152030;--fg:#dde6f0;--muted:#7c8aa0;--accent:#2dd4bf;--link:#5eead4}}
+html[data-theme=dark] #seo-shell{
+--bg:#0a0e15;--panel:#0d131c;--alt:#111a26;--line:#1b2738;--line2:#152030;--fg:#dde6f0;--muted:#7c8aa0;--accent:#2dd4bf;--link:#5eead4}
+html[data-theme=ba] #seo-shell{
+--bg:#fff;--panel:#fff;--alt:#eef2f6;--line:#c8d9ea;--line2:#dce8f4;--fg:#0b2538;--muted:#5a7187;--accent:#1289f9;--link:#0093c4}
+/* bot 内容层(给爬虫读;被加载罩盖住, 人类看不到。正常渲染, 不 display:none) */
+#seo-shell .seo-bot{position:fixed;inset:0;overflow:auto;background:var(--bg);color:var(--fg);font-family:var(--sans);line-height:1.6}
 #seo-shell .seo-wrap{max-width:880px;margin:0 auto;padding:48px 22px 64px}
 #seo-shell h1{font-size:1.6rem;margin:.1em 0 .4em;font-weight:700}
 #seo-shell .seo-sub{opacity:.7;margin:.2em 0;font-size:.95rem}
 #seo-shell .seo-lede{margin:1em 0;font-size:1.02rem}
 #seo-shell .seo-facts{list-style:none;padding:0;display:flex;gap:18px;flex-wrap:wrap;margin:1.2em 0}
-#seo-shell .seo-facts li{background:#121826;border:1px solid #1e2638;border-radius:10px;padding:10px 16px;display:flex;flex-direction:column;gap:2px}
+#seo-shell .seo-facts li{background:var(--alt);border:1px solid var(--line);border-radius:10px;padding:10px 16px;display:flex;flex-direction:column;gap:2px}
 #seo-shell .seo-facts span{opacity:.65;font-size:.8rem}
 #seo-shell .seo-facts b{font-size:1.3rem}
 #seo-shell .seo-members{display:flex;flex-wrap:wrap;gap:6px 12px;padding:0;list-style:none;margin:.6em 0}
-#seo-shell .seo-members a{color:#5b9dff;text-decoration:none}
-#seo-shell .seo-cta{opacity:.55;font-size:.88rem;margin-top:1.6em}
-#seo-shell a{color:#5b9dff}
-html[data-theme="light"] #seo-shell{background:#f6f8fc;color:#1a2230}
-html[data-theme="light"] #seo-shell .seo-facts li{background:#fff;border-color:#dde3ee}
-@media (prefers-color-scheme:light){html:not([data-theme="dark"]):not([data-theme="ba"]) #seo-shell{background:#f6f8fc;color:#1a2230}html:not([data-theme="dark"]):not([data-theme="ba"]) #seo-shell .seo-facts li{background:#fff;border-color:#dde3ee}}
+#seo-shell a{color:var(--link)}
+/* 加载罩(人类看到的;复用 app .boot 观感: mono + accent spinner, 全屏不透明盖住 bot 层) */
+#seo-shell .seo-load{position:fixed;inset:0;z-index:1;display:flex;align-items:center;justify-content:center;gap:10px;
+background:var(--bg);color:var(--muted);font:13px var(--mono);padding:20px;text-align:center}
+#seo-shell .seo-load .seo-spin{display:inline-flex;color:var(--accent)}
+#seo-shell .seo-load svg{width:15px;height:15px;animation:seo-spin 1s linear infinite}
+@keyframes seo-spin{to{transform:rotate(360deg)}}
 </style>`
 
 // ── /networks 国家分流目录(独立 SEO 页, 非 SPA 外壳;给爬虫/用户一条「首页→国家→ASN」内链路径)──
@@ -317,10 +343,10 @@ export default {
       // 文案(title/desc)与 body 同源:重新按 strings 取(render 不回传)。动态 import 避免顶层循环。
       // 同时收集结构化事实 -> JSON-LD Dataset(参考 ipinfo 的 variableMeasured 做法,助搜索引擎理解实体)。
       const { asnText, assetText, entryText } = await import('./strings.js')
-      let title, desc, jsonld
+      let title, desc, jsonld, cta
       const site = { '@type': 'WebSite', name: brand, url: brandUrl }
       if (r.kind === 'entry') {
-        const x = entryText(lang, r.page, brand); title = x.title; desc = x.desc
+        const x = entryText(lang, r.page, brand); title = x.title; desc = x.desc; cta = x.cta
         jsonld = { '@context': 'https://schema.org', '@type': 'WebPage',
           name: title, description: desc, url: canonical, inLanguage: htmlLang, isPartOf: site }
       } else if (r.kind === 'asn') {
@@ -328,7 +354,7 @@ export default {
         const c = counts && counts[r.asn]; const name = (names && names[r.asn]) || ''
         const v4 = (c && c[0]) || 0, v6 = (c && c[1]) || 0, peers = (c && c[2]) || 0
         const x = asnText(lang, { asn: r.asn, name, nameEn: name, v4, v6, peers, brand })
-        title = x.title; desc = x.desc
+        title = x.title; desc = x.desc; cta = x.cta
         const vars = [{ '@type': 'PropertyValue', name: 'ASN', value: `AS${r.asn}` }]
         if (name) vars.push({ '@type': 'PropertyValue', name: 'AS Name', value: name })
         vars.push({ '@type': 'PropertyValue', name: 'IPv4 prefixes', value: v4 })
@@ -340,7 +366,7 @@ export default {
       } else {
         const sets = await assetData(); const a = (sets && sets[r.key]) || {}
         const x = assetText(lang, { key: r.key, source: a.s || '', descr: a.d || '', count: a.c || 0, brand })
-        title = x.title; desc = x.desc
+        title = x.title; desc = x.desc; cta = x.cta
         const vars = [{ '@type': 'PropertyValue', name: 'AS-SET', value: r.key }]
         if (a.s) vars.push({ '@type': 'PropertyValue', name: 'Source', value: a.s })
         vars.push({ '@type': 'PropertyValue', name: 'Direct members', value: a.c || 0 })
@@ -361,7 +387,7 @@ export default {
       const tplRes = await env.ASSETS.fetch(new URL('/index.html', base))
       if (!tplRes || !tplRes.ok) return env.ASSETS.fetch(request)
       const tpl = await tplRes.text()
-      const html = injectShell(tpl, { body: rendered.body, lang, title, desc, canonical, jsonld, ogImage })
+      const html = injectShell(tpl, { body: rendered.body, lang, title, desc, canonical, jsonld, ogImage, cta })
 
       return new Response(html, {
         headers: {

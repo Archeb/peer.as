@@ -4,7 +4,7 @@
   import { t } from '../lib/i18n.js'
   import { cycleTheme, toggleLang } from '../lib/ui.js'
   import { setView, goHome, openProbe, openTrace } from '../lib/queries.js'
-  import { iTheme, iLang, iAbout, iRepo, iIssue, iChangelog, iNodes, iWhois, iProbe, iClose, iSatellite, iLink, iChevD, iChevR } from '../lib/icons.js'
+  import { iTheme, iLang, iAbout, iRepo, iIssue, iChangelog, iNodes, iWhois, iProbe, iClose, iSatellite, iLink, iChevD, iChevR, iGlobal } from '../lib/icons.js'
   import { brand, features } from '../lib/site.js'
   import logoBa from '../assets/peeras-ba.png'
 
@@ -69,6 +69,13 @@
       {/if}
     </nav>
     <nav class="links">
+      {#if features.geo}
+        <!-- 国家分流目录(/networks, _worker.js 渲染的独立 SEO 页): 整页导航, 非 SPA 路由。
+             从首页 SEO 内链改放到这里 —— 不占第一屏, 爬虫与人类都能从侧栏进。 -->
+        <a class="lnk" href={S.lang === 'en' ? '/networks?lang=en' : '/networks'}>
+          <Fa icon={iGlobal} /> {t('nav_networks')}
+        </a>
+      {/if}
       <a class="lnk" href="https://github.com/Archeb/peer.as" target="_blank" rel="noopener noreferrer">
         <Fa icon={iRepo} /> {t('src_home')}
       </a>

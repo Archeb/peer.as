@@ -14,5 +14,4 @@
     <li><span>{x.v6label}</span><b>{v6}</b></li>
     <li><span>{x.peerLabel}</span><b>{peers}</b></li>
   </ul>
-  <p class="seo-cta">{x.cta}</p>
 </article>

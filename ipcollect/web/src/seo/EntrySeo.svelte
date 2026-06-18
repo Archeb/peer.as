@@ -9,5 +9,4 @@
   <h1>{x.h1}</h1>
   <p class="seo-lede">{x.sum}</p>
   <p class="seo-browse"><a href={lang === 'en' ? '/networks?lang=en' : '/networks'}>{x.browse}</a></p>
-  <p class="seo-cta">{x.cta}</p>
 </article>
