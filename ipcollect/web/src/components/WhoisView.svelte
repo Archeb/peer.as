@@ -159,10 +159,7 @@
         <SelfProbe onpick={(qq) => pick(qq)} />
       </div>
 
-      <!-- 按国家浏览 ASN 的目录入口(独立 /networks 页, 整页导航); 仅干净首页显示 -->
-      {#if !S.whois.kind && !S.probeExpanded}
-        <a class="browse-link" href={S.lang === 'en' ? '/networks?lang=en' : '/networks'}>{t('wv_browse')}</a>
-      {/if}
+      <!-- 国家目录(/networks)入口不放第一屏 hero; 改由左侧 Sidebar footer 承载(见 Sidebar.svelte)。 -->
 
       {#if S.whois.kind}
         <section class="dossier" data-t={rec.cls}>
@@ -297,13 +294,6 @@
      让多行卡片完整展开、发牌飞入不被切顶; 收起时 max-height 2400→480 可平滑过渡(卡片同时缩回叠堆)。 */
   .spwrap.expanded { max-height: 2400px; overflow: visible; }
   .spwrap.booting { transition: none; }
-
-  /* 按国家浏览目录入口: 居中、低调,与 SelfProbe 卡片分隔 */
-  .browse-link {
-    display: block; text-align: center; margin: 18px auto 0; font-size: 13px;
-    color: var(--muted); text-decoration: none; font-family: var(--mono);
-  }
-  .browse-link:hover { color: var(--accent); }
 
   /* ── 命令行输入 ── */
   .console {

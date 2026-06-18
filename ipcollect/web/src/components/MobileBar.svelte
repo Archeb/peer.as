@@ -52,6 +52,12 @@
       <div><dt><Fa icon={iClock} /> {t('t_gen')}</dt><dd class="gen" title={genUtc(S.meta?.generated_ts)}>{genAgo(S.meta?.generated_ts)}</dd></div>
     </dl>
     <nav class="links">
+      {#if features.geo}
+        <!-- 国家目录(/networks): 整页导航, 非 SPA 路由。移动端入口, 与桌面 Sidebar 一致。 -->
+        <a class="lnk" href={S.lang === 'en' ? '/networks?lang=en' : '/networks'} onclick={close}>
+          <Fa icon={iGlobal} /> {t('nav_networks')}
+        </a>
+      {/if}
       <a class="lnk" href="https://github.com/Archeb/peer.as" target="_blank" rel="noopener noreferrer" onclick={close}>
         <Fa icon={iRepo} /> {t('src_home')}
       </a>
