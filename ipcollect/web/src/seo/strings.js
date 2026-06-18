@@ -115,5 +115,9 @@ export function entryText(lang, page, brand) {
     },
   }
   const e = (T[page] || T.home)[zh ? 'zh' : 'en']
-  return { ...e, brand, cta: zh ? '正在加载交互界面…' : 'Loading interactive interface…' }
+  return {
+    ...e, brand,
+    cta: zh ? '正在加载交互界面…' : 'Loading interactive interface…',
+    browse: zh ? '按国家浏览所有自治系统(ASN) →' : 'Browse all Autonomous Systems by country →',
+  }
 }

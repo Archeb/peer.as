@@ -839,6 +839,7 @@ def export(cfg: dict, con, out_dir: str = "dist") -> dict:
     # 任何异常只降级(SEO 退化为纯前端渲染), 绝不让导出失败。名称走已发布的 asnames.json, 此处不重复。
     seo_asns: list = []
     seo_assets: list = []
+    seo_networks: list = []   # [{cc,n,...}] 供 sitemap 生成 /networks/<cc>(+分页)
     try:
         seo = data / "seo"
         seo.mkdir(parents=True, exist_ok=True)
@@ -884,6 +885,36 @@ def export(cfg: dict, con, out_dir: str = "dist") -> dict:
             (seo / "asset.json").write_text(
                 json.dumps(asset_seo, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
             seo_assets = list(asset_seo.keys())
+        # networks.json: 按国家分流的 ASN 索引(SEO 引导页 /networks 用) —— asn→cc 取自 autnums 表
+        # (每行 "<asn> <NAME> - <descr>, <CC>" 的末段 CC = RIR 注册国)。dn42 无此表 -> 空。
+        import re as _re_cc
+        asn_cc: dict = {}
+        cc_cache = util.CACHE_DIR / "autnums.txt"
+        if profile.site(cfg) != "dn42" and cc_cache.exists():
+            for line in cc_cache.read_text(encoding="utf-8", errors="replace").splitlines():
+                pp = line.strip().split(None, 1)
+                if len(pp) < 2 or not pp[0].isdigit() or "," not in pp[1]:
+                    continue
+                cc = pp[1].rsplit(",", 1)[1].strip().upper()
+                if _re_cc.fullmatch(r"[A-Z]{2}", cc):
+                    asn_cc[int(pp[0])] = cc
+        if asn_cc:
+            by_cc: dict = {}
+            for a_str in seo_asns:                       # 仅收录库内有数据的 origin ASN(有 /<asn> 落地页)
+                cc = asn_cc.get(int(a_str))
+                if cc:
+                    by_cc.setdefault(cc, []).append(int(a_str))
+            for cc in by_cc:                             # 同国按通告前缀总数降序(重要的排前/首页)
+                by_cc[cc].sort(key=lambda a: -(asn_seo[str(a)][0] + asn_seo[str(a)][1]))
+            countries_seo = sorted(
+                ({"cc": cc, "n": len(v),
+                  "zh": country_names.get(cc, cc), "en": country_names_en.get(cc, cc)}
+                 for cc, v in by_cc.items()), key=lambda e: -e["n"])
+            (seo / "networks.json").write_text(
+                json.dumps({"countries": countries_seo, "asns": by_cc},
+                           ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+            seo_networks = countries_seo
+            util.log(f"  SEO 数据: networks.json {len(countries_seo)} 国 / {sum(len(v) for v in by_cc.values())} ASN 分流")
         util.log(f"  SEO 数据: asn.json {len(seo_asns)} 条; asset.json {len(seo_assets)} 条")
     except Exception as e:  # noqa  SEO 数据失败只降级, 绝不让导出失败
         util.log(f"  ! SEO 数据导出失败, 降级(SEO 退化为纯前端): {e}", err=True)
@@ -892,7 +923,7 @@ def export(cfg: dict, con, out_dir: str = "dist") -> dict:
     # (旧的 /c/<cc>.html 国家落地页已废弃 —— 它是与 SPA 脱节的死胡同页, 改由 _worker.js 同壳 SSR 接管。)
     try:
         from . import ssg
-        n_ssg = ssg.generate(out, meta, seo_asns, seo_assets)
+        n_ssg = ssg.generate(out, meta, seo_asns, seo_assets, seo_networks)
     except Exception as e:  # noqa  sitemap 失败只降级
         util.log(f"  ! sitemap 生成失败, 降级: {e}", err=True)
         n_ssg = 0

@@ -18,13 +18,14 @@ import EntrySeo from './EntrySeo.svelte'
 import { BRANDS } from './strings.js'
 
 // ── isolate 级缓存(promise) ──────────────────────────────────────────
-let _asnP, _asnamesP, _assetP
+let _asnP, _asnamesP, _assetP, _netP
 function loadJson(env, base, path) {
   return env.ASSETS.fetch(new URL(path, base)).then(r => (r && r.ok ? r.json() : null)).catch(() => null)
 }
 const asnData = (env, b) => (_asnP ??= loadJson(env, b, '/data/seo/asn.json'))
 const asnames = (env, b) => (_asnamesP ??= loadJson(env, b, '/data/asnames.json'))
 const assetData = (env, b) => (_assetP ??= loadJson(env, b, '/data/seo/asset.json'))
+const netData = (env, b) => (_netP ??= loadJson(env, b, '/data/seo/networks.json'))
 
 // ── 小工具 ───────────────────────────────────────────────────────────
 function esc(s) {
@@ -152,11 +153,141 @@ html[data-theme="light"] #seo-shell .seo-facts li{background:#fff;border-color:#
 @media (prefers-color-scheme:light){html:not([data-theme="dark"]):not([data-theme="ba"]) #seo-shell{background:#f6f8fc;color:#1a2230}html:not([data-theme="dark"]):not([data-theme="ba"]) #seo-shell .seo-facts li{background:#fff;border-color:#dde3ee}}
 </style>`
 
+// ── /networks 国家分流目录(独立 SEO 页, 非 SPA 外壳;给爬虫/用户一条「首页→国家→ASN」内链路径)──
+const NET_PER_PAGE = 500
+const NET_CSS = `*{box-sizing:border-box}body{margin:0;background:#0a0e15;color:#dde6f0;
+font-family:system-ui,-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;line-height:1.55}
+a{color:#5b9dff;text-decoration:none}a:hover{text-decoration:underline}
+.wrap{max-width:1100px;margin:0 auto;padding:28px 20px 64px}
+header.bar{display:flex;align-items:baseline;gap:14px;margin-bottom:8px}
+header.bar .brand{font-size:1.5rem;font-weight:700;color:#dde6f0}.brand .hi{color:#5b9dff}
+.crumb{font-size:.85rem;color:#8f9eb2;margin:6px 0 18px}.crumb a{color:#8f9eb2}
+h1{font-size:1.5rem;margin:.2em 0}.lede{color:#8f9eb2;margin:.2em 0 1.4em}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:10px}
+.grid a{display:flex;justify-content:space-between;gap:10px;background:#121826;border:1px solid #1e2638;
+border-radius:10px;padding:11px 14px;color:#dde6f0}.grid a:hover{border-color:#5b9dff;text-decoration:none}
+.grid .n{color:#8f9eb2;font-size:.85rem;white-space:nowrap}
+ul.asns{list-style:none;padding:0;margin:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:4px 18px}
+ul.asns li{padding:5px 0;border-bottom:1px solid #141b2a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+ul.asns .nm{color:#cdd8e6}ul.asns .pf{color:#8f9eb2;font-size:.8rem}
+.pager{display:flex;flex-wrap:wrap;gap:8px;margin:22px 0;align-items:center}
+.pager a,.pager span{padding:6px 11px;border:1px solid #1e2638;border-radius:8px;font-size:.9rem}
+.pager .cur{background:#1a2336;border-color:#5b9dff;color:#dde6f0}.pager .dis{opacity:.4}
+footer{margin-top:34px;color:#8f9eb2;font-size:.85rem}`
+
+function netDoc(lang, title, desc, canonical, bodyInner) {
+  const hl = lang === 'zh' ? 'zh-CN' : 'en'
+  const sep = canonical.includes('?') ? '&' : '?'
+  return `<!doctype html><html lang="${hl}"><head><meta charset="utf-8"/>` +
+    `<meta name="viewport" content="width=device-width,initial-scale=1"/>` +
+    `<title>${esc(title)}</title><meta name="description" content="${esc(desc)}"/>` +
+    `<meta name="robots" content="index,follow"/>` +
+    `<link rel="canonical" href="${esc(canonical)}"/>` +
+    `<link rel="alternate" hreflang="zh" href="${esc(canonical + sep + 'lang=zh')}"/>` +
+    `<link rel="alternate" hreflang="en" href="${esc(canonical + sep + 'lang=en')}"/>` +
+    `<link rel="alternate" hreflang="x-default" href="${esc(canonical)}"/>` +
+    `<meta property="og:title" content="${esc(title)}"/><meta property="og:description" content="${esc(desc)}"/>` +
+    `<meta property="og:url" content="${esc(canonical)}"/>` +
+    `<style>${NET_CSS}</style></head><body><div class="wrap">${bodyInner}` +
+    `<footer><a href="/${lang === 'en' ? '?lang=en' : ''}">← ${lang === 'zh' ? '回到 PEER.AS 首页' : 'Back to PEER.AS'}</a></footer>` +
+    `</div></body></html>`
+}
+
+function lq(lang) { return lang === 'en' ? '?lang=en' : '' }
+
+function renderNetHub(net, lang, brand, canonical) {
+  const zh = lang === 'zh'
+  const title = zh ? `按国家浏览自治系统(ASN) · ${brand}` : `Browse Autonomous Systems (ASN) by country · ${brand}`
+  const desc = zh
+    ? `按国家/地区浏览全球自治系统(ASN):各国注册的网络、通告前缀与邻居。${brand} BGP/IP/ASN 情报目录。`
+    : `Browse Autonomous Systems (ASN) by country/region: networks registered in each country, their prefixes and peers. ${brand} BGP/IP/ASN directory.`
+  const items = (net.countries || []).map(c => {
+    const name = zh ? (c.zh || c.cc) : (c.en || c.cc)
+    return `<a href="/networks/${c.cc}${lq(lang)}"><span>${esc(name)} <span class="n">(${c.cc})</span></span>` +
+      `<span class="n">${c.n.toLocaleString()} ASN</span></a>`
+  }).join('')
+  const body = `<header class="bar"><a class="brand" href="/${lq(lang)}">PEER<span class="hi">.AS</span></a></header>` +
+    `<div class="crumb">${zh ? '首页' : 'Home'} / ${zh ? '网络目录' : 'Networks'}</div>` +
+    `<h1>${zh ? '按国家浏览自治系统(ASN)' : 'Autonomous Systems by country'}</h1>` +
+    `<p class="lede">${zh ? `${(net.countries || []).length} 个国家/地区 · 点开查看各国注册的 ASN 与其通告前缀。`
+      : `${(net.countries || []).length} countries/regions · open one to see its registered ASNs and announced prefixes.`}</p>` +
+    `<div class="grid">${items}</div>`
+  return netDoc(lang, title, desc, canonical, body)
+}
+
+function renderNetCountry(net, asnNames, asnCounts, cc, page, lang, brand, canonicalBase) {
+  const zh = lang === 'zh'
+  const all = (net.asns || {})[cc]
+  if (!all) return null
+  const meta = (net.countries || []).find(c => c.cc === cc) || { cc }
+  const cname = zh ? (meta.zh || cc) : (meta.en || cc)
+  const pages = Math.max(1, Math.ceil(all.length / NET_PER_PAGE))
+  page = Math.min(Math.max(1, page), pages)
+  const slice = all.slice((page - 1) * NET_PER_PAGE, page * NET_PER_PAGE)
+  const li = slice.map(a => {
+    const nm = (asnNames && asnNames[a]) || ''
+    const c = asnCounts && asnCounts[a]
+    const pf = c ? `${(c[0] + c[1]).toLocaleString()} ${zh ? '前缀' : 'prefixes'}` : ''
+    return `<li><a href="/${a}${lq(lang)}">AS${a}</a> <span class="nm">${esc(nm)}</span> <span class="pf">${pf}</span></li>`
+  }).join('')
+  // 分页(canonicalBase = /networks/<cc>): 第 1 页无 /1 后缀
+  const purl = p => canonicalBase + (p > 1 ? '/' + p : '') + lq(lang)
+  let pager = ''
+  if (pages > 1) {
+    const parts = []
+    parts.push(page > 1 ? `<a href="${purl(page - 1)}">${zh ? '上一页' : 'Prev'}</a>` : `<span class="dis">${zh ? '上一页' : 'Prev'}</span>`)
+    const lo = Math.max(1, page - 2), hi = Math.min(pages, page + 2)
+    if (lo > 1) parts.push(`<a href="${purl(1)}">1</a>`, lo > 2 ? '<span class="dis">…</span>' : '')
+    for (let p = lo; p <= hi; p++) parts.push(p === page ? `<span class="cur">${p}</span>` : `<a href="${purl(p)}">${p}</a>`)
+    if (hi < pages) parts.push(hi < pages - 1 ? '<span class="dis">…</span>' : '', `<a href="${purl(pages)}">${pages}</a>`)
+    parts.push(page < pages ? `<a href="${purl(page + 1)}">${zh ? '下一页' : 'Next'}</a>` : `<span class="dis">${zh ? '下一页' : 'Next'}</span>`)
+    pager = `<div class="pager">${parts.filter(Boolean).join('')}</div>`
+  }
+  const pageSuffix = pages > 1 ? (zh ? ` · 第 ${page}/${pages} 页` : ` · page ${page}/${pages}`) : ''
+  const title = (zh ? `${cname} 的自治系统(ASN)` : `Autonomous Systems in ${cname}`) + pageSuffix + ` · ${brand}`
+  const desc = zh
+    ? `${cname}(${cc})注册的 ${all.length.toLocaleString()} 个自治系统(ASN)及其通告前缀。${brand} BGP/IP/ASN 目录。`
+    : `${all.length.toLocaleString()} Autonomous Systems (ASN) registered in ${cname} (${cc}) and their announced prefixes. ${brand} BGP/IP/ASN directory.`
+  const canonical = `https://peer.as${canonicalBase}${page > 1 ? '/' + page : ''}`
+  const body = `<header class="bar"><a class="brand" href="/${lq(lang)}">PEER<span class="hi">.AS</span></a></header>` +
+    `<div class="crumb"><a href="/${lq(lang)}">${zh ? '首页' : 'Home'}</a> / <a href="/networks${lq(lang)}">${zh ? '网络目录' : 'Networks'}</a> / ${esc(cname)}</div>` +
+    `<h1>${zh ? `${esc(cname)} 的自治系统` : `Autonomous Systems in ${esc(cname)}`}</h1>` +
+    `<p class="lede">${all.length.toLocaleString()} ASN${pageSuffix}</p>` +
+    `<ul class="asns">${li}</ul>${pager}`
+  return netDoc(lang, title, desc, canonical, body)
+}
+
+async function renderNetworks(url, request, env) {
+  try {
+    const lang = pickLang(url, request)
+    const brand = brandOf(url.host)
+    const base = url.origin
+    const net = await netData(env, base)
+    if (!net || !net.countries) return env.ASSETS.fetch(request)   // 无数据(如 dn42) -> 回退
+    const path = url.pathname.replace(/\/+$/, '')
+    if (path === '/networks') {
+      const html = renderNetHub(net, lang, brand, `https://peer.as/networks`)
+      return new Response(html, { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'public, max-age=3600', 'x-seo-ssr': 'networks' } })
+    }
+    const m = /^\/networks\/([A-Za-z]{2})(?:\/(\d{1,4}))?$/.exec(path)
+    if (!m) return env.ASSETS.fetch(request)
+    const cc = m[1].toUpperCase(), page = m[2] ? parseInt(m[2], 10) : 1
+    const [names, counts] = await Promise.all([asnames(env, base), asnData(env, base)])
+    const html = renderNetCountry(net, names, counts, cc, page, lang, brand, `/networks/${cc}`)
+    if (!html) return env.ASSETS.fetch(request)
+    return new Response(html, { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'public, max-age=3600', 'x-seo-ssr': 'networks-cc' } })
+  } catch (e) {
+    return env.ASSETS.fetch(request)
+  }
+}
+
 export default {
   async fetch(request, env) {
     try {
       if (request.method !== 'GET' && request.method !== 'HEAD') return env.ASSETS.fetch(request)
       const url = new URL(request.url)
+      // /networks[/<cc>[/<page>]] = 独立国家分流目录(非 SPA 外壳),自带 try/回退。
+      if (url.pathname === '/networks' || url.pathname.startsWith('/networks/')) return renderNetworks(url, request, env)
       const r = matchRoute(url.pathname)
       if (!r) return env.ASSETS.fetch(request)
 

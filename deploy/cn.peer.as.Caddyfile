@@ -110,6 +110,15 @@
 			reverse_proxy 127.0.0.1:8092
 		}
 
+		# /networks 国家分流目录由 CF Worker 渲染(双语, 非 SPA 路由)。本机无 Worker, 反代到 CF。
+		# 低频目录页, 经本机国际线尚可; canonical/链接均指向 peer.as, 用户后续点 ASN 仍回本站 SPA。
+		@networks path /networks /networks/*
+		handle @networks {
+			reverse_proxy https://bgp-insights.pages.dev {
+				header_up Host bgp-insights.pages.dev
+			}
+		}
+
 		# SPA 回退: 客户端路由(/4842、/1.1.1.0/24 等)缺失路径回退 index.html(前端 JS 解析)。真实文件原样服务。
 		try_files {path} /index.html
 		file_server

@@ -22,6 +22,7 @@ from . import util
 DEFAULT_SITE = "https://peer.as"
 URLS_PER_FILE = 40000   # sitemap 协议上限 5 万 URL / 50MB,留余量分片(每条带 2 个 hreflang 备选)。
 LANGS = ("zh", "en")
+NET_PER_PAGE = 500      # 与 _worker.js renderNetCountry 的 NET_PER_PAGE 必须一致(分页 URL 才对得上)。
 
 
 def _esc(s) -> str:
@@ -51,8 +52,9 @@ def _write_urlset(path: Path, entries: list[str]) -> None:
         f"{body}\n</urlset>\n", encoding="utf-8")
 
 
-def generate(out, meta: dict, seo_asns=None, seo_assets=None) -> int:
-    """写 sitemap 索引 + 分片 + robots。seo_asns / seo_assets = 由 export 产出的 ASN/AS-SET 键列表。
+def generate(out, meta: dict, seo_asns=None, seo_assets=None, seo_networks=None) -> int:
+    """写 sitemap 索引 + 分片 + robots。seo_asns / seo_assets = ASN/AS-SET 键列表;
+    seo_networks = [{cc,n,...}] 国家分流目录(用于 /networks 及分页)。
 
     返回收录的 URL 总数。任何调用方异常已在 export 侧 try/except 兜底。
     """
@@ -60,12 +62,23 @@ def generate(out, meta: dict, seo_asns=None, seo_assets=None) -> int:
     site = (meta.get("site_base") or DEFAULT_SITE).rstrip("/")
     seo_asns = seo_asns or []
     seo_assets = seo_assets or []
+    seo_networks = seo_networks or []
     lastmod = time.strftime("%Y-%m-%d", time.localtime(meta.get("generated_ts") or time.time()))
 
     # 收集所有可抓取路径(SSR 落地页): 入口页 + 每 ASN(/<asn>) + 每 AS-SET(/asset/<key>)。
     entry_paths = ["/", "/advanced", "/trace", "/probe"]
     asn_paths = [f"/{a}" for a in seo_asns]
     asset_paths = [f"/asset/{quote(str(k), safe='')}" for k in seo_assets]
+    # 国家分流目录: /networks 总入口 + 每国 /networks/<cc>(及分页 /networks/<cc>/<p>)。
+    net_paths = ["/networks"]
+    for c in seo_networks:
+        cc = c.get("cc")
+        if not cc:
+            continue
+        net_paths.append(f"/networks/{cc}")
+        pages = max(1, -(-int(c.get("n", 0)) // NET_PER_PAGE))   # ceil
+        for p in range(2, pages + 1):
+            net_paths.append(f"/networks/{cc}/{p}")
 
     # 清理已废弃的旧国家落地页(/c/*.html + countries.html),避免死胡同页残留被索引。
     import shutil as _shutil
@@ -88,6 +101,7 @@ def generate(out, meta: dict, seo_asns=None, seo_assets=None) -> int:
             shards.append(f"sitemaps/{fn}")
 
     _emit("entry", entry_paths)
+    _emit("networks", net_paths)
     _emit("asn", asn_paths)
     if asset_paths:
         _emit("asset", asset_paths)
@@ -103,7 +117,7 @@ def generate(out, meta: dict, seo_asns=None, seo_assets=None) -> int:
     (out / "robots.txt").write_text(
         f"User-agent: *\nAllow: /\nSitemap: {site}/sitemap.xml\n", encoding="utf-8")
 
-    n_urls = len(entry_paths) + len(asn_paths) + len(asset_paths)
+    n_urls = len(entry_paths) + len(net_paths) + len(asn_paths) + len(asset_paths)
     util.log(f"  SSG: sitemap {n_urls} URL（{len(shards)} 分片）+ robots.txt"
-             f"（ASN {len(asn_paths)} · AS-SET {len(asset_paths)} · 入口 {len(entry_paths)}）")
+             f"（ASN {len(asn_paths)} · AS-SET {len(asset_paths)} · networks {len(net_paths)} · 入口 {len(entry_paths)}）")
     return n_urls
