@@ -162,10 +162,18 @@ elif [ "$DO_BUILD" = 1 ]; then
   fi
   ./ipc build --out dist
   git -C "$PROJ" checkout -- ipcollect/web/src/lib/rdap-bootstrap.json 2>/dev/null || true
-  # 边缘 SEO SSR(CF-only): 产 dist/_worker.js + dist/_routes.json。**fail-safe**: 脚本永远 exit 0,
-  # 失败只告警 + 清理产物(站点退化为纯静态 + SPA-200 回退, SEO 退化为纯前端), 绝不阻断部署。
-  log "前端: 构建边缘 SEO SSR worker（dist/_worker.js, fail-safe）"
-  scripts/build-ssr.sh "$PROJ/dist" || true
+  # 边缘 SEO SSR functions 开关(默认关)。2026-06-18 关停:GPTBot 等 AI 爬虫把每个 ASN 落地页
+  # 都打成一次 Pages Function invocation(advanced mode),免费版 10万/天配额被爬满;而 peer.as 是
+  # custom-domain 接入(zone 不在本 CF 账号)→ 无 WAF/Rate-Limiting 可在边缘拦。故回退到加 SSR 之前的
+  # 纯静态 SPA(SPA-200 回退;AGENTS.md「边缘 SEO SSR」一节),静态资源不计费、配额风险消失。
+  # 重新启用 SSR:部署前 `export SSR=1`(产 dist/_worker.js + _routes.json,仍 fail-safe、永不阻断)。
+  if [ "${SSR:-0}" = "1" ]; then
+    log "前端: 构建边缘 SEO SSR worker（dist/_worker.js, fail-safe; SSR=1）"
+    scripts/build-ssr.sh "$PROJ/dist" || true
+  else
+    log "前端: SSR functions 已关闭（SSR=1 启用）→ 纯静态 SPA，清理残留 _worker.js/_routes.json"
+    rm -f "$PROJ/dist/_worker.js" "$PROJ/dist/_routes.json"
+  fi
 else
   log "前端: --no-build，仅 ipc sync-web（拷已构建 web/dist -> dist）"
   ./ipc sync-web --out dist
