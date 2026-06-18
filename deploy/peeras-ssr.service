@@ -1,0 +1,22 @@
+[Unit]
+Description=peer.as self-hosted SEO SSR (Node runs the CF Pages _worker.js; Caddy reverse_proxies SEO routes here)
+After=network.target
+
+[Service]
+# 纯 node builtin,无需 npm install。bundle(_worker.js)由 deploy 脚本 scp 到 /opt/peeras-ssr/。
+ExecStart=/usr/bin/node /opt/peeras-ssr/ssr-server.mjs
+Environment=SSR_WORKER=/opt/peeras-ssr/_worker.js SSR_STATIC_ROOT=/var/www/cn SSR_DATA_DIR=/var/www/cn/data SSR_HOST=127.0.0.1 SSR_PORT=8788
+Restart=on-failure
+RestartSec=2
+# 只监听 127.0.0.1(Caddy 反代),以 www-data 跑(与 og-renderer 一致)。
+# 读 /var/www/cn(deploy.sh rsync 的静态树)即可,不写盘。
+User=www-data
+Group=www-data
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=strict
+ReadOnlyPaths=/opt/peeras-ssr /var/www/cn
+
+[Install]
+WantedBy=multi-user.target

@@ -29,10 +29,18 @@ const SPINNER = `<svg viewBox="0 0 ${_SPW} ${_SPH}" fill="currentColor" aria-hid
 
 // ── isolate 级缓存(promise) ──────────────────────────────────────────
 let _asnP, _asnamesP, _assetP, _netP, _ctx
-// 数据已与前端解耦:peeras 从 **data.peer.as 跨源** fetch(前端项目不含 /data);
-// dn42(无独立数据项目)仍同源 env.ASSETS。每个 isolate 只服务一个项目/域,首请求设一次即可。
+// 数据源(每个 isolate 首请求设一次):
+//  - dn42:同源 env.ASSETS(无独立数据项目)。
+//  - peeras:默认从 **data.peer.as 跨源** fetch(CF Pages 部署,前端项目不含 /data)。
+//  - **自托管(VPS workerd/node)用 env.DATA_ORIGIN 覆盖成本地环回**(如 http://127.0.0.1:8788):
+//    VPS 本地已镜像 /data,避免每个冷 isolate 跨源拉 8.6MB asset.json —— 既慢又偶发卡死(被 loadJson 吞成回退)。
 function setCtx(env, base, host) {
-  if (!_ctx) _ctx = { env, base, dataOrigin: host && host.includes('dn42') ? null : 'https://data.peer.as' }
+  if (!_ctx) {
+    const dataOrigin = host && host.includes('dn42')
+      ? null
+      : ((env && env.DATA_ORIGIN) || 'https://data.peer.as')
+    _ctx = { env, base, dataOrigin }
+  }
 }
 function loadJson(path) {
   const { env, base, dataOrigin } = _ctx
