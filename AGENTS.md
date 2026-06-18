@@ -32,7 +32,7 @@
 - `geoip.py` — GeoLite 过期检查/下载、`build_geo`（三轨合并非重叠区间 + AS org）、按 family 内存 bisect 的 geo 索引。
 - `parquet_export.py` — **主发布步骤**（`ipc export-parquet`）：读工作库出两套 Parquet（`prefixes`/`paths`/`pathsearch`/`byorigin`/`geo` 等，v4+v6）+ `asnames.json`/`asnorg.json` + `meta.json`，调 `ssg`，拷前端。
 - `ssg.py` — **sitemap 索引 + 分片(ASN/AS-SET/入口, 带 hreflang)+ robots**(旧的 /c/*.html 国家落地页已废弃)。`parquet_export` 另产 `data/seo/{asn,asset}.json`(边缘 SSR 紧凑数据)。
-- **边缘 SEO SSR(CF-only, fail-safe)**: `web/src/seo/`(`*.Seo.svelte` + `strings.js` + `worker.js`,**单向依赖**:`*.Seo.svelte`/`strings.js` 零 app 依赖;`worker.js` 仅额外引 `../lib/icons.js`(纯 FA re-export、零浏览器依赖、tree-shake 只带 iSpinner))→ `vite.ssr.config.js` 打成 `dist/_worker.js`(CF Pages Advanced Mode)+ `_routes.json`。爬虫访问 `/<asn>`/`/asset/<key>`/入口页 → 注入 `#seo-shell`,SPA 启动后 `App.svelte` 按 id 移除接管(同 URL)。前缀不做 SSR。
+- **边缘 SEO SSR(自托管于 CN VPS, fail-safe)**: `web/src/seo/`(`*.Seo.svelte` + `strings.js` + `worker.js`,**单向依赖**:`*.Seo.svelte`/`strings.js` 零 app 依赖;`worker.js` 仅额外引 `../lib/icons.js`(纯 FA re-export、零浏览器依赖、tree-shake 只带 iSpinner))→ `vite.ssr.config.js` 打成 `dist/_worker.js`(CF Workers advanced-mode 格式的单文件 ESM bundle,**但运行时不在 CF——由 VPS 上的 Node 跑,见下条**)。爬虫访问 `/<asn>`/`/asset/<key>`/入口页 → 注入 `#seo-shell`,SPA 启动后 `App.svelte` 按 id 移除接管(同 URL)。前缀不做 SSR。
   - **`#seo-shell` 两层(一份 HTML 两类受众, 靠"盖"不靠"换")**:`.seo-bot`=给爬虫的真内容(h1/摘要/内链/事实, **正常渲染不 display:none** → 非 cloaking, 同一份 HTML 发所有 UA)+ `.seo-load`=不透明加载罩盖在上面(复用 app `.boot` 观感:mono+accent spinner+该路由 `cta` 文案, 主题 token 内联自 app.css)。人类只看到 loading 罩(loading→内容, 不闪);不跑 JS 的爬虫读源码 `.seo-bot`;跑 JS 的(Googlebot)JS 一到就揭罩见 SPA。旧版整屏"内容文档"覆盖层已废弃(SPA 接管时海外首屏会闪不同内容)。`/networks` 国家目录内链不放第一屏:在 `.seo-bot` 内 + 左侧 `Sidebar.svelte` footer(`features.geo` 门控)。
   - `scripts/build-ssr.sh` 永远 exit 0:失败/缺依赖只跳过(不产 `_worker.js`)→ 退化为纯静态 + SPA-200 回退,**绝不阻断部署**。(同一份 bundle 现由 CN VPS 的 `peeras-ssr.service`(Node)自托管运行,见下条;Caddy 自身不跑 Worker。)
   - **SSR 改为「CN VPS 自托管」(2026-06-18,不再跑 CF Pages Function)**:CF 上 SSR 已下线(GPTBot 把每个 ASN 落地页打成一次 Pages Function invocation,免费版 10万/天配额被爬满;peer.as 是 custom-domain 无 WAF 可拦)。现 **peer.as → CF for SaaS(`opentrace.app` zone 自定义主机名)→ 回源 CN VPS**,VPS 用 **Node 跑同一份 `_worker.js` bundle**(`peeras-ssr.service` → `deploy/ssr-server.mjs`,听 `127.0.0.1:8788`,数据走本地盘环回);**Caddy 把 SEO 路由(`@seo`)reverse_proxy 到它**(见 `deploy/cn.peer.as.Caddyfile`)。`build-ssr.sh` **仅 `cn_mirror`=peeras 时建 bundle**,`deploy_cn_frontend` 自动 scp 到 `/opt/peeras-ssr/` + `restart peeras-ssr`(见「部署 SOP」)。**dn42**(无 cn_mirror、不要 SEO)→ 不建 bundle,SSR 全关。CF 上 peeras 只剩 `data.peer.as`(数据项目)。CF 端 cache-all 须排除 `/dns-query`/`/whois`/`/cdn-cgi` 且 Edge TTL「尊重源」(否则 `meta.json` no-cache 被缓存死、`/cdn-cgi/trace` 地理探针被缓存乱)。
@@ -107,9 +107,9 @@
 > 纯文档/记忆类改动（如本文件）：走 1–3 即可，**不必跑 deploy.sh**。
 > `scripts/deploy.sh` 是**唯一部署入口**。flag：`--data` / `--data-light` / `--no-build` / `--cf-only` / `--cn-only` / `--help`。
 
-### 数据分发：数据/前端解耦的两个 CF Pages 项目 + CN 整站镜像
+### 数据分发：数据 Pages 项目 + 前端自托管 CN VPS + CN 整站镜像
 
-**前端与数据是两个独立 Pages 项目**(2026-06-18 解耦，让前端/worker 部署不再被 8h/2h 数据 cron 阻塞)：
+**数据是独立 Pages 项目;前端已迁到 CN VPS(2026-06-18,见上「边缘 SEO SSR」)**——两者部署独立,前端/SSR 部署不被 8h/2h 数据 cron 阻塞：
 
 - **前端项目** `bgp-insights`(`peer.as`)：**已休眠(2026-06-18)**。peer.as 改走 CF for SaaS(`opentrace.app` zone 自定义主机名)→ 回源 CN VPS,前端/SSR/外壳全由 VPS(`peeras-ssr.service` + Caddy)提供;SSR 自托管见「边缘 SEO SSR」节 + `deploy/{ssr-server.mjs,peeras-ssr.service,cn.peer.as.Caddyfile}`。本 Pages 项目不再部署、无人引用(保留可回退)。
 - **数据项目** `bgp-insights-data`(`data.peer.as`，CNAME→`bgp-insights-data.pages.dev`)：只含 `/data`(parquet/json/seo)，`_headers` 给 CORS `*` + 缓存(`deploy/data-headers`)。**同样 CF 边缘分发**(非单源，故不重蹈 R2 冷缓存覆辙)。
@@ -118,7 +118,7 @@
 - **海外 = `data.peer.as`**(数据项目)。
 - **境内 = `cn.peer.as`**(CN VPS 整站镜像，自带 `/data`)。
 - **直连 cn.peer.as / GeoDNS→CN 机器 / 本地 serve = 同源 `/data`**(本机即正确源)。
-- 取数失败统一回退 `OVERSEAS`(data.peer.as)。`_worker.js`(peeras)也**跨源** fetch `data.peer.as`；dn42(无 cnMirror)仍同源，不碰 data.peer.as。
+- 取数失败统一回退 `OVERSEAS`(data.peer.as)。**自托管 SSR 的 `_worker.js`(peeras, 跑在 VPS)读 VPS 本地 `/data`**(`env.DATA_ORIGIN` 环回, 不跨源拉 data.peer.as);dn42 已无 SSR。
 
 **数据版本/缓存**：`meta.version` 驱动 `?v=` 失效；`meta.json` no-cache。
 **CF Pages 限**(数据项目)：≤25MiB/文件、≤2万文件(当前 961 parquet / 最大分片 <25MiB)；逼近时用 export 的 `*_FILE_SIZE` 旋钮切更细分片。
@@ -126,7 +126,7 @@
 
 ### 中国优化（cn.peer.as）
 
-CF Pages 在中国大陆慢（跨境限速/丢包）。方案：一台优化线路 VPS（Caddy）托管**与 peer.as 完全一致的整站**（前端 + 数据 + 自托管 DuckDB-WASM）。解耦后 `deploy.sh` 的 CN 步也分两路：`--data*` → rsync `dist/data` 到 `cn:/data`；前端部署 → rsync 其余(排除 `/data`)。GeoDNS 把境内 `peer.as` 解到本机（需本机有 peer.as 的 TLS 证书，LE 走 DNS-01）。Caddy 还反代 `/og/*`(本机 og-renderer)、`/networks*`(到 CF Worker)、DoH/WHOIS。
+一台优化线路 VPS（Caddy）托管整站（前端 + 数据 + 自托管 DuckDB-WASM + SSR）。**2026-06-18 起这台 VPS 是前端的唯一源**：境内经 GeoDNS 直连本机、海外经 CF for SaaS 回源本机(故下面「前端部署 → rsync」既服务境内、也是海外的回源)。`deploy.sh` 的 CN 步分两路：`--data*` → rsync `dist/data` 到 `cn:/data`；前端部署 → rsync 其余(排除 `/data`) + 推 SSR bundle 到 `/opt/peeras-ssr/` 重启服务。GeoDNS 把境内 `peer.as` 解到本机（需本机有 peer.as 的 TLS 证书，LE 走 DNS-01；CF for SaaS 回源也用同一张证书,SNI=peer.as）。Caddy 还反代 `/og/*`(本机 og-renderer)、`/networks*` 及所有 SEO 路由(`@seo` → 本机 `peeras-ssr` Node SSR, `127.0.0.1:8788`)、DoH/WHOIS。
 DuckDB-WASM、Cache Storage 大 wasm 缓存、parquet 扩展自托管、全 GET 模式、Caddy 配置（CORS、关 h3、DoH/WHOIS 境内反代）等实现细节较多且稳定，**见 `web/src/lib/db.js` 与 `deploy/cn.peer.as.Caddyfile` 源码**，不在此复述。
 
 ### cron 自动刷新（全量 8h + 轻量 2h）

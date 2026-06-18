@@ -70,8 +70,9 @@ export IPC_GIT_SYNCED=1
 
 # 站点 profile(见 ipcollect/profile.py + config.json): 一次读出 site / cn_mirror / cf_project。
 #   site       前端 VITE_SITE(决定文案/品牌/person 导航等); peeras / dn42。
-#   cn_mirror  是否部署 cn.peer.as 镜像; peeras=1, dn42=0(只上 CF)。
-#   cf_project CF Pages 项目名; peeras=bgp-insights, dn42 实例在 config.json 设 cf_project。
+#   cn_mirror  是否部署 CN VPS; peeras=1, dn42=0(只上 CF)。
+#              (peeras 的 VPS 现在是**前端唯一源** + 自托管 SSR, 不只是镜像; 海外经 CF for SaaS 回源它。)
+#   cf_project CF Pages 项目名; peeras=bgp-insights(**已休眠**, 前端不再推 CF, 仅 dn42 用 deploy_cf 推自己的项目)。
 # 读取失败回退 peeras 现状值(保守, 不破坏主站部署)。
 _prof="$("$PROJ/.venv/bin/python" -c 'from ipcollect import config, profile
 from urllib.parse import urlparse
