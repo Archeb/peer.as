@@ -20,7 +20,7 @@ import { render } from 'svelte/server'
 import AsnSeo from './AsnSeo.svelte'
 import AssetSeo from './AssetSeo.svelte'
 import EntrySeo from './EntrySeo.svelte'
-import { BRANDS } from './strings.js'
+import { BRANDS, navText } from './strings.js'
 import { iSpinner } from '../lib/icons.js'   // 复用 app 图标(纯 FA re-export, 零浏览器依赖)
 
 // 加载罩的 spinner: 直接取 app 的 faSpinner 路径, 内联成可旋转 SVG(复用 .boot 观感)。
@@ -102,7 +102,8 @@ async function renderRoute(r, lang, brand, env, base) {
 
 // 注入到 index.html 外壳。tpl=原始 index.html 文本。jsonld=已构建的 schema.org 对象(随路由类型而异)。
 // cta=加载罩里显示的本地化「正在加载…」文案(各路由自带, 见 strings.js)。
-function injectShell(tpl, { body, lang, title, desc, canonical, jsonld, ogImage, cta }) {
+// brand=品牌字; hasNetworks=是否有国家目录(peeras 有、dn42 无) → 决定左 rail 是否带 /networks 内链。
+function injectShell(tpl, { body, lang, title, desc, canonical, jsonld, ogImage, cta, brand, hasNetworks }) {
   const htmlLang = lang === 'zh' ? 'zh-CN' : 'en'
   const sep = canonical.includes('?') ? '&' : '?'
   const altZh = esc(canonical + sep + 'lang=zh')
@@ -143,8 +144,18 @@ function injectShell(tpl, { body, lang, title, desc, canonical, jsonld, ogImage,
   out = out.replace(/<\/head>/i, `${headExtra}</head>`)
   // #seo-shell 覆盖层(全屏;SPA 接管后由 App.svelte 移除)。放在 #app 之后、脚本之前。
   // 两层: bot 内容(给爬虫) + 加载罩(给人类, 盖在上面)。
+  // bot 内容 = 镜像真实 app 布局: 左 rail(品牌→首页 + /networks 国家目录内链) + 正文。
+  // /networks 故意放进左 rail(不占首屏正文), 与 SPA Sidebar 一致。
+  const n = navText(lang)
+  const brandMain = String(brand || '').replace(/\.AS$/i, '')
+  const railLinks = hasNetworks
+    ? `<nav class="seo-nav"><a href="/networks${n.lq}">${esc(n.networks)}</a></nav>`
+    : ''
+  const rail = `<aside class="seo-rail">` +
+    `<a class="seo-brand" href="/${n.lq}" title="${esc(n.home)}">${esc(brandMain)}<span>.AS</span></a>` +
+    railLinks + `</aside>`
   const shell = `<div id="seo-shell">${SHELL_STYLE}` +
-    `<div class="seo-bot"><main class="seo-wrap">${body}</main></div>` +
+    `<div class="seo-bot">${rail}<main class="seo-wrap">${body}</main></div>` +
     `<div class="seo-load" role="status" aria-live="polite">` +
     `<span class="seo-spin">${SPINNER}</span><span>${esc(cta || '')}</span></div></div>`
   if (/<div id="app"><\/div>/i.test(out))
@@ -167,9 +178,15 @@ html[data-theme=dark] #seo-shell{
 --bg:#0a0e15;--panel:#0d131c;--alt:#111a26;--line:#1b2738;--line2:#152030;--fg:#dde6f0;--muted:#7c8aa0;--accent:#2dd4bf;--link:#5eead4}
 html[data-theme=ba] #seo-shell{
 --bg:#fff;--panel:#fff;--alt:#eef2f6;--line:#c8d9ea;--line2:#dce8f4;--fg:#0b2538;--muted:#5a7187;--accent:#1289f9;--link:#0093c4}
-/* bot 内容层(给爬虫读;被加载罩盖住, 人类看不到。正常渲染, 不 display:none) */
-#seo-shell .seo-bot{position:fixed;inset:0;overflow:auto;background:var(--bg);color:var(--fg);font-family:var(--sans);line-height:1.6}
-#seo-shell .seo-wrap{max-width:880px;margin:0 auto;padding:48px 22px 64px}
+/* bot 内容层(给爬虫读;被加载罩盖住, 人类看不到。正常渲染, 不 display:none)。
+   布局镜像真实 app: 左 rail(232px, 同 Sidebar) + 正文 —— /networks 内链落在 rail 里, 不占首屏正文。 */
+#seo-shell .seo-bot{position:fixed;inset:0;overflow:auto;display:flex;background:var(--bg);color:var(--fg);font-family:var(--sans);line-height:1.6}
+#seo-shell .seo-rail{flex:0 0 232px;display:flex;flex-direction:column;gap:18px;padding:16px 16px 14px;border-right:1px solid var(--line);background:var(--panel)}
+#seo-shell .seo-brand{font:800 18px/1 var(--mono);color:var(--fg);text-decoration:none}
+#seo-shell .seo-brand span{color:var(--accent)}
+#seo-shell .seo-nav{display:flex;flex-direction:column;gap:6px;border-top:1px solid var(--line2);padding-top:12px}
+#seo-shell .seo-nav a{font:600 12.5px var(--sans);color:var(--muted);text-decoration:none}
+#seo-shell .seo-wrap{flex:1;min-width:0;max-width:880px;padding:48px 22px 64px}
 #seo-shell h1{font-size:1.6rem;margin:.1em 0 .4em;font-weight:700}
 #seo-shell .seo-sub{opacity:.7;margin:.2em 0;font-size:.95rem}
 #seo-shell .seo-lede{margin:1em 0;font-size:1.02rem}
@@ -387,7 +404,8 @@ export default {
       const tplRes = await env.ASSETS.fetch(new URL('/index.html', base))
       if (!tplRes || !tplRes.ok) return env.ASSETS.fetch(request)
       const tpl = await tplRes.text()
-      const html = injectShell(tpl, { body: rendered.body, lang, title, desc, canonical, jsonld, ogImage, cta })
+      // hasNetworks: 国家目录仅 peeras 有(dn42 netData 为 null) → 决定左 rail 是否带 /networks 内链。
+      const html = injectShell(tpl, { body: rendered.body, lang, title, desc, canonical, jsonld, ogImage, cta, brand, hasNetworks: cHost === 'peer.as' })
 
       return new Response(html, {
         headers: {

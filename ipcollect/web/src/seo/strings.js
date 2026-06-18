@@ -118,6 +118,16 @@ export function entryText(lang, page, brand) {
   return {
     ...e, brand,
     cta: zh ? '正在加载交互界面…' : 'Loading interactive interface…',
-    browse: zh ? '按国家浏览所有自治系统(ASN) →' : 'Browse all Autonomous Systems by country →',
+  }
+}
+
+// bot 内容层左侧 rail 的全站内链(品牌→首页、国家目录)。href 带 lang(与 SSR 其它内链一致)。
+export function navText(lang) {
+  const zh = lang !== 'en'
+  const lq = zh ? '' : '?lang=en'
+  return {
+    lq,
+    home: zh ? '回到首页' : 'Home',
+    networks: zh ? '按国家浏览所有自治系统(ASN)' : 'Browse all Autonomous Systems by country',
   }
 }
