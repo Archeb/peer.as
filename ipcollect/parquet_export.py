@@ -943,6 +943,12 @@ def export(cfg: dict, con, out_dir: str = "dist") -> dict:
                            ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
             seo_networks = countries_seo
             util.log(f"  SEO 数据: networks.json {len(countries_seo)} 国 / {sum(len(v) for v in by_cc.values())} ASN 分流")
+            # asn_cc.json: {asn: "CC"} —— OG 大图左下角国旗用的可靠国家源(autnums 注册国, 5 RIR 全覆盖,
+            # 取代不可靠的 RDAP/WHOIS country)。og-renderer 读本机 /data/seo/asn_cc.json。
+            (seo / "asn_cc.json").write_text(
+                json.dumps({str(a): cc for a, cc in asn_cc.items()},
+                           ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+            util.log(f"  SEO 数据: asn_cc.json {len(asn_cc)} 条")
         util.log(f"  SEO 数据: asn.json {len(seo_asns)} 条; asset.json {len(seo_assets)} 条")
     except Exception as e:  # noqa  SEO 数据失败只降级, 绝不让导出失败
         util.log(f"  ! SEO 数据导出失败, 降级(SEO 退化为纯前端): {e}", err=True)

@@ -58,6 +58,16 @@ ROLE_LABEL = {"registrant": "registrant", "administrative": "admin", "technical"
               "abuse": "abuse", "registrar": "registrar", "noc": "NOC", "reseller": "reseller",
               "routing": "routing", "proxy": "proxy", "notifications": "notify"}
 
+# ── 左下角国旗 ───────────────────────────────────────────────────────────────────────────
+# ASN 国家取自管线 seo/asn_cc.json(autnums 注册国 CC, 5 个 RIR 全覆盖、稳定; **不查 RDAP/WHOIS** —— RDAP
+# 仅 APNIC 返 country, 其余 RIR 要 WHOIS 且 AFRINIC/RIPE 还得从关联组织推断, 不可靠)。国旗用 flag-icons
+# 预栅格的 PNG(4x3)。与右下角数据时间同底线对齐。**TW 映射到 CN 旗**(显示口径)。
+FLAG_DIR = os.path.join(ASSETS, "og-icons", "flags")
+FLAG_H = 38
+FLAG_ALIAS = {"TW": "CN"}
+PAD = 64        # 左右/底部统一 padding
+BOT = 64        # 底部 padding(与左右一致)
+
 try:
     os.makedirs(CACHE, exist_ok=True)
 except OSError:
@@ -112,6 +122,13 @@ def load(name):
         obj = json.load(open(p, encoding="utf-8"))
         _cache[name] = (m, obj)
         return obj
+
+def load_opt(name):
+    """像 load() 但文件缺失/损坏时返回 {}(用于可选数据集, 如 seo/asn_cc.json 旧数据尚无)。"""
+    try:
+        return load(name)
+    except Exception:
+        return {}
 
 def data_mtime():
     t = 0.0
@@ -169,9 +186,25 @@ def _stamp(d):
     s = data_label()
     if not s:
         return
-    f = _font("lr", 24)
-    w = d.textlength(s, font=f)
-    d.text((W - 64 - w, H - 52), s, font=f, fill=MUTED)
+    # 右下角数据时间: 底线对齐(anchor=rb), 与左下角国旗齐平; 下/右 padding 一致。
+    d.text((W - PAD, H - BOT), s, font=_font("lr", 24), fill=MUTED, anchor="rb")
+
+# ── 国旗(左下角)──────────────────────────────────────────────────────────────────────────
+_flags = {}
+def _flag(cc):
+    if not cc:
+        return None
+    key = FLAG_ALIAS.get(str(cc).upper(), str(cc).upper()).lower()
+    if key in _flags:
+        return _flags[key]
+    im = None
+    try:
+        src = Image.open(os.path.join(FLAG_DIR, f"{key}.png")).convert("RGBA")
+        im = src.resize((round(FLAG_H * src.width / src.height), FLAG_H), Image.LANCZOS)
+    except Exception:
+        im = None
+    _flags[key] = im
+    return im
 
 def _pill(d, x, y, label, value, vcolor):
     lf, vf = _font("lr", 26), _font("lb", 48)
@@ -355,6 +388,9 @@ def render_asn(asn):
     x += _pill(d, x, y, "IPv6 prefixes", _fmt(v6), FG) + gap
     _pill(d, x, y, "Peers", _fmt(peers), ACCENT)
     _draw_whois(img, d, asn)
+    fl = _flag(load_opt("seo/asn_cc.json").get(asn))   # 左下角国旗(与右下角数据时间齐平)
+    if fl:
+        img.paste(fl, (PAD, H - BOT - FLAG_H), fl)
     _stamp(d)
     return img
 
