@@ -1,0 +1,15 @@
+# 数据 Pages 项目(bgp-insights-data / data.peer.as)的 _headers。
+# 前端 DuckDB-WASM 跨源整片 GET 读取 -> 需 CORS *;parquet 带 ?v= 版本可长缓存;meta.json 必校验。
+/data/*
+  Access-Control-Allow-Origin: *
+  Access-Control-Expose-Headers: Content-Length, Content-Range, Accept-Ranges, ETag
+/data/parquet/*
+  Cache-Control: public, max-age=31536000
+/data/prefixes/*
+  Cache-Control: public, max-age=31536000
+/data/meta.json
+  Cache-Control: no-cache
+/data/asnames.json
+  Cache-Control: public, max-age=86400
+/data/seo/*
+  Cache-Control: public, max-age=3600

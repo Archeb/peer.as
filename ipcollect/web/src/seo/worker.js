@@ -6,8 +6,9 @@
 //    用户 JS 启动后 SPA 原地无缝接管(同 URL、同壳),main.js 在内容就绪后移除 #seo-shell。
 //  - 其余一切(前缀 /1.1.1.0/24、/dns、/whois、静态资源…)→ env.ASSETS.fetch 原样(含 CF SPA-200 回退)。
 //  - **全程 fail-safe**:任何异常 → env.ASSETS.fetch(request)。SSR 整层失效也只是退化为纯前端渲染。
-//  - 数据来自同源静态资产(asnames.json + data/seo/*.json),按 isolate 缓存(每个 Pages 版本独立 isolate,
-//    与其 ASSETS 一致,无跨版本错配)。读不了 parquet,故 export 侧已把所需字段导成小 JSON。
+//  - 数据已与前端解耦:peeras 从 **data.peer.as 跨源** fetch(asnames.json + data/seo/*.json);
+//    dn42 仍同源 env.ASSETS。按 isolate 缓存。读不了 parquet,故 export 侧已把所需字段导成小 JSON。
+//    index.html 外壳仍走 env.ASSETS(前端项目)。
 //
 // **零 app 依赖**:仅 import 同目录 *.Seo.svelte + strings.js + svelte/server。单向依赖,SPA 不感知本层。
 
@@ -18,14 +19,21 @@ import EntrySeo from './EntrySeo.svelte'
 import { BRANDS } from './strings.js'
 
 // ── isolate 级缓存(promise) ──────────────────────────────────────────
-let _asnP, _asnamesP, _assetP, _netP
-function loadJson(env, base, path) {
-  return env.ASSETS.fetch(new URL(path, base)).then(r => (r && r.ok ? r.json() : null)).catch(() => null)
+let _asnP, _asnamesP, _assetP, _netP, _ctx
+// 数据已与前端解耦:peeras 从 **data.peer.as 跨源** fetch(前端项目不含 /data);
+// dn42(无独立数据项目)仍同源 env.ASSETS。每个 isolate 只服务一个项目/域,首请求设一次即可。
+function setCtx(env, base, host) {
+  if (!_ctx) _ctx = { env, base, dataOrigin: host && host.includes('dn42') ? null : 'https://data.peer.as' }
 }
-const asnData = (env, b) => (_asnP ??= loadJson(env, b, '/data/seo/asn.json'))
-const asnames = (env, b) => (_asnamesP ??= loadJson(env, b, '/data/asnames.json'))
-const assetData = (env, b) => (_assetP ??= loadJson(env, b, '/data/seo/asset.json'))
-const netData = (env, b) => (_netP ??= loadJson(env, b, '/data/seo/networks.json'))
+function loadJson(path) {
+  const { env, base, dataOrigin } = _ctx
+  const p = dataOrigin ? fetch(`${dataOrigin}${path}`) : env.ASSETS.fetch(new URL(path, base))
+  return p.then(r => (r && r.ok ? r.json() : null)).catch(() => null)
+}
+const asnData = () => (_asnP ??= loadJson('/data/seo/asn.json'))
+const asnames = () => (_asnamesP ??= loadJson('/data/asnames.json'))
+const assetData = () => (_assetP ??= loadJson('/data/seo/asset.json'))
+const netData = () => (_netP ??= loadJson('/data/seo/networks.json'))
 
 // ── 小工具 ───────────────────────────────────────────────────────────
 function esc(s) {
@@ -66,7 +74,7 @@ async function renderRoute(r, lang, brand, env, base) {
     return { body: render(EntrySeo, { props: { lang, page: r.page, brand } }).body }
   }
   if (r.kind === 'asn') {
-    const [counts, names] = await Promise.all([asnData(env, base), asnames(env, base)])
+    const [counts, names] = await Promise.all([asnData(), asnames()])
     const c = counts && counts[r.asn]
     const name = (names && names[r.asn]) || ''
     if (!c && !name) return null   // 未知 ASN -> 交给 SPA(可能是新数据/前缀误配)
@@ -74,7 +82,7 @@ async function renderRoute(r, lang, brand, env, base) {
     return { body: render(AsnSeo, { props }).body }
   }
   if (r.kind === 'asset') {
-    const sets = await assetData(env, base)
+    const sets = await assetData()
     const a = sets && sets[r.key]
     if (!a) return null
     const props = { lang, setKey: r.key, source: a.s || '', descr: a.d || '', count: a.c || 0, members: a.m || [], brand }
@@ -259,10 +267,10 @@ function renderNetCountry(net, asnNames, asnCounts, cc, page, lang, brand, canon
 
 async function renderNetworks(url, request, env) {
   try {
+    setCtx(env, url.origin, url.host)
     const lang = pickLang(url, request)
     const brand = brandOf(url.host)
-    const base = url.origin
-    const net = await netData(env, base)
+    const net = await netData()
     if (!net || !net.countries) return env.ASSETS.fetch(request)   // 无数据(如 dn42) -> 回退
     const path = url.pathname.replace(/\/+$/, '')
     if (path === '/networks') {
@@ -272,7 +280,7 @@ async function renderNetworks(url, request, env) {
     const m = /^\/networks\/([A-Za-z]{2})(?:\/(\d{1,4}))?$/.exec(path)
     if (!m) return env.ASSETS.fetch(request)
     const cc = m[1].toUpperCase(), page = m[2] ? parseInt(m[2], 10) : 1
-    const [names, counts] = await Promise.all([asnames(env, base), asnData(env, base)])
+    const [names, counts] = await Promise.all([asnames(), asnData()])
     const html = renderNetCountry(net, names, counts, cc, page, lang, brand, `/networks/${cc}`)
     if (!html) return env.ASSETS.fetch(request)
     return new Response(html, { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'public, max-age=3600', 'x-seo-ssr': 'networks-cc' } })
@@ -286,6 +294,7 @@ export default {
     try {
       if (request.method !== 'GET' && request.method !== 'HEAD') return env.ASSETS.fetch(request)
       const url = new URL(request.url)
+      setCtx(env, url.origin, url.host)   // 选定数据源(peeras -> data.peer.as 跨源; dn42 -> 同源)
       // /networks[/<cc>[/<page>]] = 独立国家分流目录(非 SPA 外壳),自带 try/回退。
       if (url.pathname === '/networks' || url.pathname.startsWith('/networks/')) return renderNetworks(url, request, env)
       const r = matchRoute(url.pathname)
@@ -315,7 +324,7 @@ export default {
         jsonld = { '@context': 'https://schema.org', '@type': 'WebPage',
           name: title, description: desc, url: canonical, inLanguage: htmlLang, isPartOf: site }
       } else if (r.kind === 'asn') {
-        const [counts, names] = await Promise.all([asnData(env, base), asnames(env, base)])
+        const [counts, names] = await Promise.all([asnData(), asnames()])
         const c = counts && counts[r.asn]; const name = (names && names[r.asn]) || ''
         const v4 = (c && c[0]) || 0, v6 = (c && c[1]) || 0, peers = (c && c[2]) || 0
         const x = asnText(lang, { asn: r.asn, name, nameEn: name, v4, v6, peers, brand })
@@ -329,7 +338,7 @@ export default {
           { '@type': 'Dataset', name: `AS${r.asn}${name ? ' ' + name : ''}`, description: desc,
             url: canonical, inLanguage: htmlLang, isPartOf: site, variableMeasured: vars }] }
       } else {
-        const sets = await assetData(env, base); const a = (sets && sets[r.key]) || {}
+        const sets = await assetData(); const a = (sets && sets[r.key]) || {}
         const x = assetText(lang, { key: r.key, source: a.s || '', descr: a.d || '', count: a.c || 0, brand })
         title = x.title; desc = x.desc
         const vars = [{ '@type': 'PropertyValue', name: 'AS-SET', value: r.key }]

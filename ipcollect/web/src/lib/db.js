@@ -27,6 +27,10 @@ const CDN_DIST = [
 const SAME = new URL('./data', document.baseURI).href.replace(/\/$/, '')       // 同源 /data
 const CN_ORIGIN = (import.meta.env.VITE_CN_BASE || 'https://cn.peer.as').replace(/\/$/, '')
 let CN_HOST = 'cn.peer.as'; try { CN_HOST = new URL(CN_ORIGIN).hostname } catch { /* 默认 cn.peer.as */ }
+// 海外数据宿主: 数据已**与前端解耦**到独立 CF Pages 项目(data.peer.as,同样边缘分发),
+// 前端项目不再含 /data。海外 CF 用户从此取数;也是所有路径的最终回退源。仅 peeras(cnMirror)用;
+// dn42 等无 cn 镜像的站仍走同源 /data(其前端项目自带数据)。
+const OVERSEAS = (import.meta.env.VITE_DATA_BASE || 'https://data.peer.as/data').replace(/\/$/, '')
 
 // 运行时选定(默认同源); configure() 据域名/geo 改写。
 export let DATA = SAME             // parquet/json 基址。ES module 活绑定: 重新赋值后各处即时生效。
@@ -56,11 +60,11 @@ async function fetchT(url, opts = {}, ms = 2000) {
 
 // 启动时调用一次: 选定数据宿主(wasm/worker 已打包同源, 见 wasmSrcs)。
 export async function configure() {
-  DATA = SAME; edge = 'cf'
-  // 本站无 cn.peer.as 整站镜像(profile cn_mirror=false, 如 dn42): 永远同源, 不做任何 CN 探测/分流。
-  // 否则会把数据切到 cn.peer.as —— 而 cn.peer.as 只镜像 peeras 全球数据集, dn42 切过去会加载错 meta/parquet 直接炸。
-  if (!features.cnMirror) return edge
-  // 1) 直连 CN 机器(host=cn.peer.as): 同源即 CN 机器 —— 数据 /data 同源。
+  DATA = OVERSEAS; edge = 'cf'   // 默认(海外 CF): 走独立数据项目 data.peer.as
+  // 本站无 cn.peer.as 整站镜像(profile cn_mirror=false, 如 dn42): 永远同源(其前端项目自带 /data),
+  // 不做任何 CN 探测/分流, 也不碰 data.peer.as(那是 peeras 数据集, dn42 切过去会加载错 meta/parquet 直接炸)。
+  if (!features.cnMirror) { DATA = SAME; return edge }
+  // 1) 直连 CN 机器(host=cn.peer.as): 同源即 CN 机器 —— 数据 /data 同源(Caddy 本地)。
   if (location.hostname === CN_HOST) {
     DATA = SAME; edge = 'cn'
     return edge
@@ -75,15 +79,15 @@ export async function configure() {
   } catch { /* 网络错误(非 404 响应): 含糊, 不强判, 保持 CF 默认 */ onCF = null }
   if (onCF === false) {
     // /cdn-cgi/trace 明确 404(收到响应但非 200) => 不在 Cloudflare => GeoDNS 已把 peer.as 解到 CN 加速机
-    // (或本地 serve)。数据同源(本机即正确源); edge=cn 让 UI 显示「中国优化服务器」赞助提示。
-    edge = 'cn'
+    // (或本地 serve)。数据同源(本机即正确源, Caddy 自带 /data); edge=cn 显示「中国优化服务器」赞助提示。
+    DATA = SAME; edge = 'cn'
   } else if (onCF && loc === 'CN') {        // 在 CF Pages 且身处境内(GeoDNS 没生效, 拿到 CF IP)
-    try {                                   // 健康探测 CN 机器: 通了才切数据, 失败保持同源 CF(回退)。
+    try {                                   // 健康探测 CN 机器: 通了才切数据, 失败保持 data.peer.as 海外源。
       const r = await fetchT(`${CN_ORIGIN}/data/meta.json`, { cache: 'no-store' }, 2000)
       if (r.ok) { DATA = `${CN_ORIGIN}/data`; edge = 'cn' }   // wasm 随之优先走 CN 镜像(wasmSrcs)
-    } catch { /* CN 机器不可达 -> 同源 CF 回退 */ }
+    } catch { /* CN 机器不可达 -> 保持 data.peer.as(默认) */ }
   }
-  // else: onCF && loc!=CN (海外 CF), 或 onCF===null(网络错误) -> 同源, edge='cf'
+  // else: onCF && loc!=CN (海外 CF), 或 onCF===null(网络错误) -> data.peer.as(默认 OVERSEAS), edge='cf'
   return edge
 }
 
@@ -110,8 +114,8 @@ export async function getJSON(url, opts) {
 export async function getData(path, opts) {
   try { return await getJSON(`${DATA}${path}`, opts) }
   catch (e) {
-    // 数据源(可能是 cn.peer.as)取数失败 -> 整体回退同源(CF Pages / 本机)。
-    if (DATA !== SAME) { DATA = SAME; edge = 'cf'; return await getJSON(`${SAME}${path}`, opts) }
+    // 取数失败 -> 回退到海外数据项目(data.peer.as, 权威边缘源)。dn42(无 cn 镜像)无此项目, 不回退(throw)。
+    if (features.cnMirror && DATA !== OVERSEAS) { DATA = OVERSEAS; edge = 'cf'; return await getJSON(`${OVERSEAS}${path}`, opts) }
     throw e
   }
 }

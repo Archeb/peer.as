@@ -68,10 +68,6 @@ if [ "${IPC_GIT_SYNCED:-0}" != 1 ] && command -v git >/dev/null 2>&1 && git -C "
 fi
 export IPC_GIT_SYNCED=1
 
-# 防并发：cron 与手动互斥（上一次没跑完就退出，避免并发重 ingest 撕裂 DB / 半成品 dist 被部署）。
-exec 9>"$PROJ/logs/deploy.lock"
-if ! flock -n 9; then log "另一次 deploy 仍在运行，退出。"; exit 0; fi
-
 # 站点 profile(见 ipcollect/profile.py + config.json): 一次读出 site / cn_mirror / cf_project。
 #   site       前端 VITE_SITE(决定文案/品牌/person 导航等); peeras / dn42。
 #   cn_mirror  是否部署 cn.peer.as 镜像; peeras=1, dn42=0(只上 CF)。
@@ -80,12 +76,26 @@ if ! flock -n 9; then log "另一次 deploy 仍在运行，退出。"; exit 0; f
 _prof="$("$PROJ/.venv/bin/python" -c 'from ipcollect import config, profile
 from urllib.parse import urlparse
 c=config.load(); f=profile.features(c)
-print(profile.site(c), ("1" if f["cn_mirror"] else "0"), (c.get("cf_project") or "bgp-insights"), (urlparse(c.get("site_base") or "https://peer.as").hostname or "peer.as"))' 2>/dev/null || echo "peeras 1 bgp-insights peer.as")"
-read -r SITE CN_MIRROR CF_PROJECT PRIMARY_HOST <<<"$_prof"
-[ -n "${SITE:-}" ] || { SITE=peeras; CN_MIRROR=1; CF_PROJECT=bgp-insights; PRIMARY_HOST=peer.as; }
+dcp = c.get("data_cf_project") or ("bgp-insights-data" if f["cn_mirror"] else "")
+print(profile.site(c), ("1" if f["cn_mirror"] else "0"), (c.get("cf_project") or "bgp-insights"), (urlparse(c.get("site_base") or "https://peer.as").hostname or "peer.as"), dcp)' 2>/dev/null || echo "peeras 1 bgp-insights peer.as bgp-insights-data")"
+read -r SITE CN_MIRROR CF_PROJECT PRIMARY_HOST DATA_CF_PROJECT <<<"$_prof"
+[ -n "${SITE:-}" ] || { SITE=peeras; CN_MIRROR=1; CF_PROJECT=bgp-insights; PRIMARY_HOST=peer.as; DATA_CF_PROJECT=bgp-insights-data; }
 export VITE_SITE="$SITE"   # npm build(ipc build)据此产出对应站点前端
+# 数据/前端解耦(仅 peeras, DATA_CF_PROJECT 非空): --data* 只推「数据」Pages 项目(data.peer.as)+ CN /data;
+# 无 data flag 只 build+推「前端」项目(不含 /data)+ CN 前端。两者各自独立锁 -> 前端部署永不被数据 cron 阻塞。
+# dn42(DATA_CF_PROJECT 空)沿用旧耦合流程(数据+前端同项目、同 dist)。
+DATA_MODE=0; { [ "$WITH_DATA" = 1 ] || [ "$WITH_DATA_LIGHT" = 1 ]; } && DATA_MODE=1
+DECOUPLED=0; [ -n "${DATA_CF_PROJECT:-}" ] && DECOUPLED=1
+export VITE_DATA_BASE="${VITE_DATA_BASE:-https://data.peer.as/data}"   # 前端海外数据源(db.js OVERSEAS)
 
-log "deploy 开始: site=$SITE host=$PRIMARY_HOST data=$WITH_DATA data_light=$WITH_DATA_LIGHT$([ "$WITH_DATA_LIGHT" = 1 ] && echo "($REFRESH_ONLY)") build=$DO_BUILD target=$TARGET cn_mirror=$CN_MIRROR cf_project=$CF_PROJECT"
+# 防并发锁：解耦(peeras)时数据与前端各用独立锁(互不阻塞 -> 前端部署不再等数据 cron);
+# 耦合(dn42)用单锁。放在 prof/模式确定之后(git-sync 已在 flock 之前完成)。
+LOCKF="$PROJ/logs/deploy.lock"
+[ "$DECOUPLED" = 1 ] && LOCKF="$PROJ/logs/deploy.$([ "$DATA_MODE" = 1 ] && echo data || echo frontend).lock"
+exec 9>"$LOCKF"
+if ! flock -n 9; then log "另一次 deploy 仍在运行(${LOCKF##*/})，退出。"; exit 0; fi
+
+log "deploy 开始: site=$SITE host=$PRIMARY_HOST data=$WITH_DATA data_light=$WITH_DATA_LIGHT$([ "$WITH_DATA_LIGHT" = 1 ] && echo "($REFRESH_ONLY)") build=$DO_BUILD target=$TARGET cn_mirror=$CN_MIRROR cf_project=$CF_PROJECT data_cf_project=${DATA_CF_PROJECT:-（无,耦合）} decoupled=$DECOUPLED mode=$([ "$DATA_MODE" = 1 ] && echo data || echo frontend)"
 
 # ── 1) 数据（可选）──────────────────────────────────────────────────────────
 if [ "$WITH_DATA" = 1 ]; then
@@ -136,7 +146,10 @@ fi
 # ── 2) 前端 ────────────────────────────────────────────────────────────────
 # export-parquet 只产数据/SSG、不拷前端（copy_web 在 build/sync-web 里），故前端步骤独立、在数据之后。
 # 默认总是 npm build：保证部署的前端永远是最新源码（消除"改了前端源却忘 build、部署旧前端"的事故类）。
-if [ "$DO_BUILD" = 1 ]; then
+# 解耦(peeras)数据模式: 只刷数据项目, **不建/不推前端**(前端随代码改动单独部署)。
+if [ "$DECOUPLED" = 1 ] && [ "$DATA_MODE" = 1 ]; then
+  log "前端: 解耦数据模式 —— 跳过前端构建(只刷数据项目)"
+elif [ "$DO_BUILD" = 1 ]; then
   log "前端: vendor duckdb 扩展 + RDAP bootstrap + ipc build（npm run build + 拷 web/dist -> dist）"
   scripts/vendor-duckdb-ext.sh    # 确保 public/duckdb-ext/ 就位（pinned，已存在则秒过）-> vite 拷进 dist
   # RDAP bootstrap 自更新（IANA RFC 9224）：best-effort，IANA 拉不到就用现有内置，**不阻塞部署**。
@@ -194,47 +207,97 @@ PY
     *) log "✗ 数据闸: $res —— 中止部署"; exit 1 ;;
   esac
 }
-gate_data
+# ── 3) 部署核心 ────────────────────────────────────────────────────────────
+RSH="ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20"
 
-# ── 3) 部署核心（唯一实现）─────────────────────────────────────────────────
+# 耦合(dn42): 整 dist(数据+前端)一把推 —— 旧实现保留。
 deploy_cn(){
   if [ -z "${CN_DEPLOY_SSH:-}" ]; then log "CN: 未设置 CN_DEPLOY_SSH，跳过"; return 0; fi
   local CNPATH="${CN_DEPLOY_PATH:-/var/www/cn}"
-  local RSH="ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20"
-  # CN VPS（Caddy 无大小限制）托管**完整 dist 含 wasm**。--delete 清掉本地没有的旧文件（含已废 /duckdb）。
-  # meta.json 最后单独传（原子切版本：数据分片先到位再切版本号）。best-effort，失败不阻断（境内回退 CF）。
-  # _worker.js/_routes.json 是 CF-only 的边缘 SSR(Caddy 跑不了 Worker), 不发往 CN(否则源码暴露在 cn.peer.as)。
-  log "CN: rsync 整站 dist/ -> ${CN_DEPLOY_SSH}:${CNPATH}/（含完整 wasm；排除 _worker.js/_routes.json；meta.json 最后传）"
-  if rsync -a --delete --exclude='data/meta.json' --exclude='_worker.js' --exclude='_routes.json' -e "$RSH" "$PROJ/dist/" "${CN_DEPLOY_SSH}:${CNPATH}/" \
+  log "CN: rsync 整站 dist/ -> ${CN_DEPLOY_SSH}:${CNPATH}/（排除 _worker.js/_routes.json；meta.json 最后传）"
+  if rsync -a --delete --exclude='data/meta.json' --exclude='data/.wrangler' --exclude='_worker.js' --exclude='_routes.json' -e "$RSH" "$PROJ/dist/" "${CN_DEPLOY_SSH}:${CNPATH}/" \
      && rsync -a -e "$RSH" "$PROJ/dist/data/meta.json" "${CN_DEPLOY_SSH}:${CNPATH}/data/meta.json"; then
     log "CN: ✓ 同步完成"
-  else
-    log "CN: ⚠ 同步失败（境内回退 CF，不阻断）"
-  fi
+  else log "CN: ⚠ 同步失败（境内回退 CF，不阻断）"; fi
 }
-deploy_cf(){
-  # CF Pages 单文件 ≤25MiB，而 duckdb-eh/mvp.wasm 达 33/39MB（pages deploy 不认 .assetsignore）。
-  # 用「硬链接暂存株」部署：cp -al 整个 dist 到同盘临时目录（秒级、不复制数据），删副本里的 *.wasm 再 deploy。
-  #   真实 dist/ 全程不动 → 既能与 deploy_cn(rsync dist/ 含 wasm) 安全并行，又比"移出/移回"更稳(wrangler 失败也不伤 dist)。
-  #   (CF 节点前端 wasmSrcs 走 CDN 取 wasm；worker/数据照常同源)
+deploy_cf(){   # 整 dist -> CF_PROJECT(去超限 wasm)
   local STAGE rc=0
   STAGE="$(mktemp -d "$PROJ/.cfstage.XXXXXX")" || { log "CF: ✗ 暂存目录创建失败"; return 1; }
   cp -al "$PROJ/dist/." "$STAGE/" || { rm -rf "$STAGE"; log "CF: ✗ 硬链接暂存失败"; return 1; }
-  rm -f "$STAGE"/assets/*.wasm 2>/dev/null || true
-  log "CF: wrangler pages deploy → 项目 $CF_PROJECT（排除超限 wasm；CF 节点 wasm 回退 CDN）"
+  rm -rf "$STAGE/data/.wrangler"; rm -f "$STAGE"/assets/*.wasm 2>/dev/null || true
+  log "CF: wrangler pages deploy → 项目 $CF_PROJECT（排除超限 wasm）"
   wrangler pages deploy "$STAGE" --project-name "$CF_PROJECT" --branch main --commit-dirty=true \
-    --commit-message="deploy.sh $SITE $({ [ "$WITH_DATA" = 1 ] || [ "$WITH_DATA_LIGHT" = 1 ]; } && echo 'data+web' || echo web)" || rc=$?
-  rm -rf "$STAGE"
-  return $rc
+    --commit-message="deploy.sh $SITE web+data" || rc=$?
+  rm -rf "$STAGE"; return $rc
 }
-# 并行推送: CN(rsync 整站) ∥ CF(wrangler 暂存株)。deploy_cf 不动 dist/ 故与 deploy_cn 无冲突。
-# 互锁: 等两端都结束再继续(verify 要两端都已切版本)。CN best-effort(函数内吞失败), CF 失败=中止。
-CN_PID= ; CF_PID= ; CF_RC=0
-{ [ "$TARGET" != cf ] && [ "$CN_MIRROR" = 1 ]; } && { deploy_cn & CN_PID=$!; }
-[ "$TARGET" != cn ] && { deploy_cf & CF_PID=$!; }
-[ -n "$CN_PID" ] && { wait "$CN_PID" || true; }
-[ -n "$CF_PID" ] && { wait "$CF_PID" || CF_RC=$?; }
-[ "$CF_RC" = 0 ] || { log "✗ CF 部署失败(rc=$CF_RC) —— 中止部署"; exit 1; }
+
+# 解耦(peeras): 数据项目 / 前端项目 各自独立推送 ──────────────────────────────
+deploy_cf_data(){   # dist/data -> DATA_CF_PROJECT(data.peer.as);stage = data/ + _headers
+  local STAGE rc=0
+  STAGE="$(mktemp -d "$PROJ/.cfstage.XXXXXX")" || { log "CF(data): ✗ 暂存失败"; return 1; }
+  mkdir -p "$STAGE/data"
+  cp -al "$PROJ/dist/data/." "$STAGE/data/" || { rm -rf "$STAGE"; log "CF(data): ✗ 硬链接失败"; return 1; }
+  rm -rf "$STAGE/data/.wrangler"
+  cp "$PROJ/deploy/data-headers" "$STAGE/_headers" 2>/dev/null || true
+  log "CF(data): wrangler pages deploy → 项目 $DATA_CF_PROJECT"
+  wrangler pages deploy "$STAGE" --project-name "$DATA_CF_PROJECT" --branch main --commit-dirty=true \
+    --commit-message="deploy.sh $SITE data" || rc=$?
+  rm -rf "$STAGE"; return $rc
+}
+deploy_cf_frontend(){   # dist 去掉 data/ + 去 wasm -> CF_PROJECT(peer.as)
+  local STAGE rc=0
+  STAGE="$(mktemp -d "$PROJ/.cfstage.XXXXXX")" || { log "CF(fe): ✗ 暂存失败"; return 1; }
+  cp -al "$PROJ/dist/." "$STAGE/" || { rm -rf "$STAGE"; log "CF(fe): ✗ 硬链接失败"; return 1; }
+  rm -rf "$STAGE/data"; rm -f "$STAGE"/assets/*.wasm 2>/dev/null || true
+  log "CF(fe): wrangler pages deploy → 项目 $CF_PROJECT（不含 /data；排除超限 wasm）"
+  wrangler pages deploy "$STAGE" --project-name "$CF_PROJECT" --branch main --commit-dirty=true \
+    --commit-message="deploy.sh $SITE web" || rc=$?
+  rm -rf "$STAGE"; return $rc
+}
+deploy_cn_data(){   # rsync 仅 dist/data -> cn:/data(--delete 限 data/ 内)
+  [ -z "${CN_DEPLOY_SSH:-}" ] && { log "CN(data): 未设 CN_DEPLOY_SSH,跳过"; return 0; }
+  local CNPATH="${CN_DEPLOY_PATH:-/var/www/cn}"
+  log "CN(data): rsync dist/data/ -> ${CN_DEPLOY_SSH}:${CNPATH}/data/（排除 .wrangler；meta.json 最后）"
+  if rsync -a --delete --exclude='.wrangler' --exclude='meta.json' -e "$RSH" "$PROJ/dist/data/" "${CN_DEPLOY_SSH}:${CNPATH}/data/" \
+     && rsync -a -e "$RSH" "$PROJ/dist/data/meta.json" "${CN_DEPLOY_SSH}:${CNPATH}/data/meta.json"; then
+    log "CN(data): ✓ 同步完成"
+  else log "CN(data): ⚠ 同步失败(不阻断)"; fi
+}
+deploy_cn_frontend(){   # rsync dist 但排除 data/(数据由 deploy_cn_data 管;--delete 不碰 data/)
+  [ -z "${CN_DEPLOY_SSH:-}" ] && { log "CN(fe): 未设 CN_DEPLOY_SSH,跳过"; return 0; }
+  local CNPATH="${CN_DEPLOY_PATH:-/var/www/cn}"
+  log "CN(fe): rsync dist/ -> ${CN_DEPLOY_SSH}:${CNPATH}/（排除 /data /_worker.js /_routes.json）"
+  if rsync -a --delete --exclude='/data' --exclude='/_worker.js' --exclude='/_routes.json' -e "$RSH" "$PROJ/dist/" "${CN_DEPLOY_SSH}:${CNPATH}/"; then
+    log "CN(fe): ✓ 同步完成"
+  else log "CN(fe): ⚠ 同步失败(不阻断)"; fi
+}
+
+# 部署分派: 解耦(peeras)按模式只推一类;耦合(dn42)整 dist 一把推。CN best-effort, CF 失败=中止。
+CF_RC=0
+if [ "$DECOUPLED" = 1 ] && [ "$DATA_MODE" = 1 ]; then
+  gate_data
+  CN_PID= ; CF_PID=
+  [ "$TARGET" != cn ] && { deploy_cf_data & CF_PID=$!; }
+  { [ "$TARGET" != cf ] && [ "$CN_MIRROR" = 1 ]; } && { deploy_cn_data & CN_PID=$!; }
+  [ -n "$CN_PID" ] && { wait "$CN_PID" || true; }
+  [ -n "$CF_PID" ] && { wait "$CF_PID" || CF_RC=$?; }
+  [ "$CF_RC" = 0 ] || { log "✗ CF(data) 部署失败(rc=$CF_RC) —— 中止"; exit 1; }
+elif [ "$DECOUPLED" = 1 ]; then
+  CN_PID= ; CF_PID=
+  [ "$TARGET" != cn ] && { deploy_cf_frontend & CF_PID=$!; }
+  { [ "$TARGET" != cf ] && [ "$CN_MIRROR" = 1 ]; } && { deploy_cn_frontend & CN_PID=$!; }
+  [ -n "$CN_PID" ] && { wait "$CN_PID" || true; }
+  [ -n "$CF_PID" ] && { wait "$CF_PID" || CF_RC=$?; }
+  [ "$CF_RC" = 0 ] || { log "✗ CF(fe) 部署失败(rc=$CF_RC) —— 中止"; exit 1; }
+else
+  gate_data
+  CN_PID= ; CF_PID=
+  { [ "$TARGET" != cf ] && [ "$CN_MIRROR" = 1 ]; } && { deploy_cn & CN_PID=$!; }
+  [ "$TARGET" != cn ] && { deploy_cf & CF_PID=$!; }
+  [ -n "$CN_PID" ] && { wait "$CN_PID" || true; }
+  [ -n "$CF_PID" ] && { wait "$CF_PID" || CF_RC=$?; }
+  [ "$CF_RC" = 0 ] || { log "✗ CF 部署失败(rc=$CF_RC) —— 中止部署"; exit 1; }
+fi
 
 # ── 4) 部署后轻量校验（防回归：两端入口一致 + CN wasm 自托管）─────────────────
 verify(){
@@ -270,5 +333,18 @@ verify(){
     log "扩展: ⚠ dist/duckdb-ext 缺失（vendor 未跑?）—— 前端将回退官方 extensions.duckdb.org"
   fi
 }
-verify || true
+# 数据模式校验: 数据宿主 meta.version 与本地一致(data.peer.as 未绑定时只告警)。
+verify_data(){
+  local lv; lv="$("$PROJ/.venv/bin/python" -c "import json;print(json.load(open('$PROJ/dist/data/meta.json'))['version'])" 2>/dev/null || true)"
+  log "校验(data): 本地 meta.version = ${lv:-?}"
+  for h in data.peer.as cn.peer.as; do
+    { [ "$TARGET" = cf ] && [ "$h" = cn.peer.as ]; } && continue
+    { [ "$TARGET" = cn ] && [ "$h" = data.peer.as ]; } && continue
+    { [ "$CN_MIRROR" != 1 ] && [ "$h" = cn.peer.as ]; } && continue
+    local gv; gv="$(curl -fsS --max-time 15 "https://$h/data/meta.json" 2>/dev/null | "$PROJ/.venv/bin/python" -c "import json,sys;print(json.load(sys.stdin).get('version',''))" 2>/dev/null || true)"
+    if [ -n "$gv" ] && [ "$gv" = "$lv" ]; then log "校验(data): ✓ $h meta.version 一致"
+    else log "校验(data): ⚠ $h meta.version=${gv:-空}（缓存/传播/域名未绑?需复查）"; fi
+  done
+}
+if [ "$DECOUPLED" = 1 ] && [ "$DATA_MODE" = 1 ]; then verify_data || true; else verify || true; fi
 log "完成 ✅"
