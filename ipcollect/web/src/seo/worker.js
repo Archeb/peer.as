@@ -248,7 +248,7 @@ function lq(lang) { return lang === 'en' ? '?lang=en' : '' }
 
 function renderNetHub(net, lang, brand, canonical) {
   const zh = lang === 'zh'
-  const title = zh ? `按国家和地区浏览自治系统(ASN) · ${brand}` : `Browse Autonomous Systems (ASN) by country · ${brand}`
+  const title = zh ? `按国家和地区浏览自治系统(ASN) · ${brand}` : `Browse Autonomous Systems (ASN) by country/region · ${brand}`
   const desc = zh
     ? `按国家和地区浏览全球自治系统(ASN):各国家和地区注册的网络、通告前缀与邻居。${brand} BGP/IP/ASN 情报目录。`
     : `Browse Autonomous Systems (ASN) by country/region: networks registered in each country, their prefixes and peers. ${brand} BGP/IP/ASN directory.`
@@ -259,7 +259,7 @@ function renderNetHub(net, lang, brand, canonical) {
   }).join('')
   const body = `<header class="bar"><a class="brand" href="/${lq(lang)}">PEER<span class="hi">.AS</span></a></header>` +
     `<div class="crumb">${zh ? '首页' : 'Home'} / ${zh ? '网络目录' : 'Networks'}</div>` +
-    `<h1>${zh ? '按国家和地区浏览自治系统(ASN)' : 'Autonomous Systems by country'}</h1>` +
+    `<h1>${zh ? '按国家和地区浏览自治系统(ASN)' : 'Autonomous Systems by country/region'}</h1>` +
     `<p class="lede">${zh ? `${(net.countries || []).length} 个国家和地区`
       : `${(net.countries || []).length} countries/regions`}</p>` +
     `<div class="grid">${items}</div>`
