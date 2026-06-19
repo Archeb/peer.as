@@ -1,28 +1,40 @@
 <script>
   // 404 —— 用本站「网络运营控制台」语汇把「页面不存在」表达成「目标无路由」:
-  // 一段真实的三跳 traceroute(你的 IP → 边缘节点 → 本站),最后一跳为空 = 无路由 · 404。
+  // 一段真实的 4 跳 traceroute(你的 IP → 边缘节点 → 本站 → * * * 无响应) = 无路由 · 404。
+  // 先探测同源 /cdn-cgi/trace(最多等 0.5s), 拿到结果再逐跳动画落下, 让真实数据一行行出现。
   // SPA 端(路由无法解析为任何已知对象/视图时)渲染; SSR 端有对应静态版(seo/NotFoundSeo.svelte)。
   import Fa from 'svelte-fa'
   import { onMount } from 'svelte'
   import { t } from '../lib/i18n.js'
   import { goHome } from '../lib/queries.js'
   import { fetchTrace } from '../lib/geo.js'
-  import { iCompass } from '../lib/icons.js'
+  import { iCompass, iSpinner } from '../lib/icons.js'
 
   let { target = '' } = $props()
   // 没传 target 时取当前路径(被请求、却无路由的那一跳)。
   let shown = $derived(target || (typeof location !== 'undefined' ? decodeURIComponent(location.pathname) : ''))
   const host = typeof location !== 'undefined' ? location.host : 'peer.as'
 
-  // 前两跳来自同源 /cdn-cgi/trace: 你的 IP + 边缘节点(CF colo / CN 镜像标记)。
   let ip = $state('')
   let edge = $state('')
+  let ready = $state(false)   // trace 解析完(或 0.5s 超时)后才开始逐跳动画
+
+  // 第二跳标注: edge=cn 标记 = 我们自建的 DMIT(LAX); 否则真 Cloudflare, 用 colo(如 NRT)。
+  function labelEdge(tr) {
+    if (tr.edge === 'cn') return 'DMIT.LAX'
+    if (tr.colo) return 'CLOUDFLARE.' + tr.colo
+    if (tr.edge) return tr.edge.toUpperCase()
+    return tr.cc || ''
+  }
+  function apply(tr) { if (tr) { ip = tr.ip || ''; edge = labelEdge(tr) } }
+
   onMount(async () => {
-    const tr = await fetchTrace()
-    if (tr) {
-      ip = tr.ip || ''
-      edge = tr.colo || (tr.edge ? tr.edge.toUpperCase() : '') || tr.cc || ''
-    }
+    const p = fetchTrace()
+    // 等 trace 出结果, 但最多等 0.5s —— 到点就先开动画(占位), 真值后到再补。
+    const tr = await Promise.race([p, new Promise(r => setTimeout(() => r('timeout'), 500))])
+    if (tr && tr !== 'timeout') apply(tr)
+    else p.then(apply)
+    ready = true
   })
 
   function back() {
@@ -32,19 +44,23 @@
 </script>
 
 <div class="nf">
-  <!-- 信号物: 一次真实但走到尽头的 traceroute。前三跳抵达本站, 第四跳(被请求的资源)无路由 -> 404。 -->
+  <!-- 信号物: 一次真实但走到尽头的 traceroute。前三跳抵达本站, 第四跳(被请求的资源)无响应 -> 404。 -->
   <div class="card" role="img" aria-label={t('nf_title')}>
     <div class="bar">
       <span class="dot"></span><span class="dot"></span><span class="dot"></span>
       <span class="cmd">traceroute {shown}</span>
     </div>
-    <ol class="hops">
-      <li class="ok"><span class="h">01</span><span class="n">{ip || '· · ·'}</span><span class="r">{t('nf_you')}</span></li>
-      <li class="ok"><span class="h">02</span><span class="n">{edge || '· · ·'}</span><span class="r">{t('nf_edge')}</span></li>
-      <li class="ok"><span class="h">03</span><span class="n">{host}</span><span class="r">{t('nf_reached')}</span></li>
-      <li class="dead"><span class="h">04</span><span class="n">* * *</span><span class="r">{t('nf_noresp')}</span></li>
-    </ol>
-    <div class="fail"><span class="x">✗</span> no route to host <b class="code">404</b></div>
+    {#if ready}
+      <ol class="hops">
+        <li class="ok"><span class="h">01</span><span class="n">{ip || '· · ·'}</span><span class="r">{t('nf_you')}</span></li>
+        <li class="ok"><span class="h">02</span><span class="n">{edge || '· · ·'}</span><span class="r">{t('nf_edge')}</span></li>
+        <li class="ok"><span class="h">03</span><span class="n">{host}</span><span class="r">{t('nf_reached')}</span></li>
+        <li class="dead"><span class="h">04</span><span class="n">* * *</span><span class="r">{t('nf_noresp')}</span></li>
+      </ol>
+      <div class="fail"><span class="x">✗</span> no route to host <b class="code">404</b></div>
+    {:else}
+      <div class="tracing"><Fa icon={iSpinner} spin /> <span>traceroute…</span></div>
+    {/if}
   </div>
 
   <h1>{t('nf_title')}</h1>
@@ -79,6 +95,9 @@
   .bar { display: flex; align-items: center; gap: 6px; padding: 9px 13px; background: var(--alt); border-bottom: 1px solid var(--line); }
   .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--line); }
   .cmd { margin-left: 8px; font-size: 11.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  /* trace 解析中(等 /cdn-cgi/trace, 最多 0.5s) */
+  .tracing { display: flex; align-items: center; gap: 10px; padding: 18px 15px; color: var(--muted); font-size: 12.5px; }
+  .tracing :global(svg) { color: var(--accent); width: 13px; }
   .hops { list-style: none; margin: 0; padding: 8px 0; }
   .hops li { display: flex; align-items: center; gap: 12px; padding: 4px 15px; font-size: 12.5px; }
   .hops .h { color: var(--muted); opacity: .55; width: 16px; flex: 0 0 auto; }
@@ -115,14 +134,16 @@
   .btn.primary:hover { background: var(--accent-h); border-color: var(--accent-h); color: var(--accent-fg); }
   .btn:focus-visible { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-dim); }
 
-  /* 入场: 跳逐行落下, 失败行最后浮现。尊重减弱动效。 */
+  /* 卡片 0.3s 浮入; 就绪后各跳逐行落下, 失败行最后浮现。尊重减弱动效。 */
   @media (prefers-reduced-motion: no-preference) {
+    .card { animation: nf-card .3s ease both; }
     .hops li, .fail { animation: nf-in .42s ease both; }
-    .hops li:nth-child(1) { animation-delay: .04s; }
+    .hops li:nth-child(1) { animation-delay: .02s; }
     .hops li:nth-child(2) { animation-delay: .16s; }
-    .hops li:nth-child(3) { animation-delay: .28s; }
-    .hops li:nth-child(4) { animation-delay: .42s; }
-    .fail { animation-delay: .58s; }
+    .hops li:nth-child(3) { animation-delay: .30s; }
+    .hops li:nth-child(4) { animation-delay: .44s; }
+    .fail { animation-delay: .60s; }
   }
+  @keyframes nf-card { from { opacity: 0; transform: translateY(6px) scale(.99); } to { opacity: 1; transform: none; } }
   @keyframes nf-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 </style>
