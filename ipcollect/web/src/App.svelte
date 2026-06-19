@@ -133,6 +133,10 @@
   })
 </script>
 
+{#if S.notFound}
+  <!-- 404: 完全独立的整屏页面, 不挂任何 app 外壳(无 Sidebar / Topbar / MobileBar) -->
+  <NotFound target={S.notFound.target} />
+{:else}
 <div class="app">
   <Sidebar />
   <!-- 左上角开合按钮(桌面专用, 首页 + 路由分析两页都有); 抽屉展开时由侧栏自带的关闭钮/遮罩收起 -->
@@ -154,9 +158,7 @@
       <MobileBar />
       <Topbar />
       <div class="content">
-        {#if S.notFound}
-          <NotFound target={S.notFound.target} />
-        {:else if S.fatal}
+        {#if S.fatal}
           <div class="fatal"><b>×</b> {S.fatal}</div>
         {:else if S.loading}
           <div class="boot"><Fa icon={iSpinner} spin /> <span>{S.msg || t('loading')}</span></div>
@@ -172,6 +174,7 @@
     <InsightDrawer />
   {/if}
 </div>
+{/if}
 <AboutModal />
 <ChangelogModal />
 <PathHelpModal />

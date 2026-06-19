@@ -9,6 +9,7 @@
   import { t } from '../lib/i18n.js'
   import { goHome } from '../lib/queries.js'
   import { fetchTrace } from '../lib/geo.js'
+  import { brand } from '../lib/site.js'
   import { iCompass, iSpinner } from '../lib/icons.js'
 
   let { target = '' } = $props()
@@ -49,6 +50,7 @@
 </script>
 
 <div class="nf">
+  <button class="brand" onclick={goHome} aria-label={t('home')}>{brand.main}<span>{brand.hi}</span></button>
   <!-- 信号物: 一次真实但走到尽头的 traceroute。前三跳抵达本站, 第四跳(被请求的资源)无响应 -> 404。 -->
   <div class="card" role="img" aria-label={t('nf_title')}>
     <div class="bar">
@@ -83,12 +85,20 @@
 </div>
 
 <style>
+  /* 整屏独立页(不挂 app 外壳): 自带背景, 内容垂直居中 */
   .nf {
-    flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
-    gap: 16px; padding: 40px 20px 64px; text-align: center; min-height: 58vh;
+    min-height: 100vh; min-height: 100dvh;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 16px; padding: 40px 20px; text-align: center; background: var(--bg); color: var(--fg);
     /* 这一页唯一的越界色: 失败跳的红(明暗两套, 仅本组件作用域)。 */
     --nf-bad: #cf5246; --nf-bad-bg: rgba(207, 82, 76, .07);
   }
+  .brand {
+    background: none; border: 0; cursor: pointer; padding: 4px; margin-bottom: 2px;
+    font: 800 18px/1 var(--mono); color: var(--fg); letter-spacing: .5px; -webkit-tap-highlight-color: transparent;
+  }
+  .brand span { color: var(--accent); }
+  .brand:focus-visible { outline: none; border-radius: 4px; box-shadow: 0 0 0 3px var(--accent-dim); }
   @media (prefers-color-scheme: dark) {
     :global(:root:not([data-theme])) .nf { --nf-bad: #f08a80; --nf-bad-bg: rgba(240, 138, 128, .10); }
   }
