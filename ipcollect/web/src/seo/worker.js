@@ -20,7 +20,8 @@ import { render } from 'svelte/server'
 import AsnSeo from './AsnSeo.svelte'
 import AssetSeo from './AssetSeo.svelte'
 import EntrySeo from './EntrySeo.svelte'
-import { BRANDS, navText } from './strings.js'
+import NotFoundSeo from './NotFoundSeo.svelte'
+import { BRANDS, navText, notFoundText } from './strings.js'
 import { iSpinner } from '../lib/icons.js'   // 复用 app 图标(纯 FA re-export, 零浏览器依赖)
 
 // 加载罩的 spinner: 直接取 app 的 faSpinner 路径, 内联成可旋转 SVG(复用 .boot 观感)。
@@ -236,6 +237,15 @@ html[data-theme=ba] #seo-shell{
 #seo-shell .seo-pfxlist .cc{color:var(--muted);font-size:.78rem;flex:0 0 auto}
 #seo-shell .seo-more{margin:.9em 0 0;font-size:.9rem}
 #seo-shell a{color:var(--link)}
+/* 404 正文(nf-seo): 与 SPA NotFound 同隐喻的静态版(给爬虫;人类被加载罩盖住) */
+#seo-shell .nf-eyebrow{font:600 12px var(--mono);letter-spacing:1px;color:var(--accent);margin:0 0 .25em}
+#seo-shell .nf-target{font-family:var(--mono);font-size:.9rem;color:var(--muted);margin:.5em 0}
+#seo-shell .nf-target code{background:var(--alt);border:1px solid var(--line);border-radius:6px;padding:2px 8px;color:var(--fg)}
+#seo-shell .nf-trace{display:flex;flex-direction:column;gap:3px;margin:1.5em 0 0;padding:14px 16px;max-width:430px;
+background:var(--panel);border:1px solid var(--line);border-radius:10px;font-family:var(--mono);font-size:.86rem;color:var(--muted)}
+#seo-shell .nf-trace .cmd{color:var(--muted);opacity:.8;margin-bottom:4px}
+#seo-shell .nf-trace .ok{color:var(--fg)}
+#seo-shell .nf-trace .bad{color:#cf5246;border-top:1px dashed var(--line);padding-top:8px;margin-top:5px}
 /* 加载罩(人类看到的;复用 app .boot 观感: mono + accent spinner, 全屏不透明盖住 bot 层) */
 #seo-shell .seo-load{position:fixed;inset:0;z-index:1;display:flex;align-items:center;justify-content:center;gap:10px;
 background:var(--bg);color:var(--muted);font:13px var(--mono);padding:20px;text-align:center}
@@ -372,6 +382,31 @@ async function renderNetworks(url, request, env) {
   }
 }
 
+// 已定义路由(ASN / AS-SET)但库内无该记录 -> 渲染通用 404 落地页(status 404, SEO 正确;
+// 加载罩盖住 bot 内容, SPA 启动后照常按 URL 接管)。subject = 显示给用户的请求对象(AS<n> / set 键)。
+async function render404(env, base, { url, lang, brand, host, subject }) {
+  const x = notFoundText(lang, { brand, target: subject })
+  const cHost = canonicalHost(host)
+  const canonical = `https://${cHost}${url.pathname}`
+  const brandUrl = `https://${cHost}/`
+  const htmlLang = lang === 'zh' ? 'zh-CN' : 'en'
+  const body = render(NotFoundSeo, { props: { lang, brand, target: subject } }).body
+  const jsonld = { '@context': 'https://schema.org', '@type': 'WebPage',
+    name: x.title, description: x.desc, url: canonical, inLanguage: htmlLang,
+    isPartOf: { '@type': 'WebSite', name: brand, url: brandUrl } }
+  const tplRes = await env.ASSETS.fetch(new URL('/index.html', base))
+  if (!tplRes || !tplRes.ok) return new Response('Not Found', { status: 404, headers: { 'content-type': 'text/plain; charset=utf-8' } })
+  let html = injectShell(await tplRes.text(), {
+    body, lang, title: x.title, desc: x.desc, canonical, jsonld, ogImage: null, cta: x.cta,
+    brand, hasNetworks: cHost === 'peer.as',
+  })
+  html = html.replace(/<\/head>/i, `<meta name="robots" content="noindex,follow"/></head>`)   // 404 不应被收录
+  return new Response(html, {
+    status: 404,
+    headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'public, max-age=60', 'x-seo-ssr': '404' },
+  })
+}
+
 export default {
   async fetch(request, env) {
     try {
@@ -389,7 +424,11 @@ export default {
       const base = url.origin
 
       const rendered = await renderRoute(r, lang, brand, env, base)
-      if (!rendered) return env.ASSETS.fetch(request)
+      if (!rendered) {
+        // entry 永不为 null;到这里必是 ASN/AS-SET 路由但库内无该记录 -> SSR 404。
+        const subject = r.kind === 'asn' ? `AS${r.asn}` : (r.kind === 'asset' ? r.key : '')
+        return render404(env, base, { url, lang, brand, host, subject })
+      }
 
       // canonical 永远指向**品牌域**(非服务主机),避免 *.pages.dev 与 peer.as 重复收录。
       const cHost = canonicalHost(host)

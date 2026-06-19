@@ -9,6 +9,7 @@ export const S = $state({
   theme: 'auto',           // auto | light | dark
   loading: true,
   fatal: '',               // 致命错误文案(meta.json / DuckDB 引擎加载失败); 仅路由分析视图显示, 不阻断 WHOIS 视图
+  notFound: null,          // { target } —— 路径无法解析为任何已知路由/对象时置(404); App 渲染 NotFound, applyRoute/goHome 清空
   msg: '',
   rows: [],                // 当前结果行
   // 顶层视图: 'routing'(BGP 路由分析: 主查询页 + 详情面板) | 'whois'(WHOIS·RDAP 独立查询视图)

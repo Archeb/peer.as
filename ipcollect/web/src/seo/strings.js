@@ -123,6 +123,31 @@ export function entryText(lang, page, brand) {
   }
 }
 
+// 404 落地页文案(通用「页面未找到」, 非仅路由)。data = {brand, target}
+// 与 SPA 端 i18n 的 nf_* 同语义, 保持两端措辞一致。
+export function notFoundText(lang, d) {
+  const zh = lang !== 'en'
+  const brand = (d && d.brand) || BRANDS.peeras
+  const target = (d && d.target) || ''
+  return {
+    brand, target, code: '404',
+    eyebrow: zh ? '404 · 无法抵达' : '404 · UNREACHABLE',
+    h1: zh ? '页面未找到' : 'Page not found',
+    lede: zh
+      ? `这个地址不在 ${brand}——可能链接已失效、地址输入有误，或对应记录尚未收录。`
+      : `This address isn't on ${brand} — the link may be broken, mistyped, or the record isn't indexed yet.`,
+    targetLabel: zh ? '请求地址' : 'Requested',
+    homeLabel: zh ? '回到首页' : 'Back to home',
+    youLabel: zh ? '你' : 'you', edgeLabel: zh ? '边缘节点' : 'edge', reachedLabel: zh ? '已抵达' : 'reached',
+    noRespLabel: zh ? '无响应' : 'no response',
+    cta: zh ? '正在加载…' : 'Loading…',
+    title: zh ? `页面未找到 — 404 · ${brand}` : `Page not found — 404 · ${brand}`,
+    desc: zh
+      ? `未找到该页面(404)。在 ${brand} 查询全球 BGP 路由、IP 前缀、ASN、AS_PATH 与 WHOIS。`
+      : `Page not found (404). Look up global BGP routing, IP prefixes, ASNs, AS_PATH and WHOIS on ${brand}.`,
+  }
+}
+
 // bot 内容层左侧 rail 的全站内链(品牌→首页、国家目录)。href 带 lang(与 SSR 其它内链一致)。
 export function navText(lang) {
   const zh = lang !== 'en'

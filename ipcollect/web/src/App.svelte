@@ -5,7 +5,7 @@
   import { configure, ensureEngine, ensureMeta } from './lib/db.js'
   import { applyTheme, setLang } from './lib/ui.js'
   import { ccLabel } from './lib/bgp.js'
-  import { applyRoute, hardCloseDetail, clearDetail } from './lib/queries.js'
+  import { applyRoute, hardCloseDetail, clearDetail, isNotFoundPath } from './lib/queries.js'
   import { t } from './lib/i18n.js'
   import { brand, features } from './lib/site.js'
   import { iSpinner, iMenu, iClose } from './lib/icons.js'
@@ -15,6 +15,7 @@
   import WhoisView from './components/WhoisView.svelte'
   import RouteTraceView from './components/RouteTraceView.svelte'
   import Results from './components/Results.svelte'
+  import NotFound from './components/NotFound.svelte'
   import DnsView from './components/DnsView.svelte'
   import AsSetView from './components/AsSetView.svelte'
   import InsightDrawer from './components/InsightDrawer.svelte'
@@ -63,7 +64,7 @@
   function dropSeo() { if (!_seoGone) { _seoGone = true; document.getElementById('seo-shell')?.remove() } }
   $effect(() => {
     if (_seoGone) return
-    if (S.fatal) return dropSeo()                                   // 出错 -> 让 app 的错误态显示
+    if (S.fatal || S.notFound) return dropSeo()                     // 出错 / 404 -> 让 app 的对应态显示
     if (S.view === 'whois' || S.view === 'trace') return dropSeo()  // 即时视图: 立刻接管
     if (S.view === 'routing') {
       if (S.loading) return                                         // 引擎加载中: 继续展示 SSR 内容
@@ -90,6 +91,16 @@
     const whoisLanding = features.whoisView && (/^\/whois(\/|$)/.test(location.pathname) || (location.pathname === '/' && !qp.has('q')))
     if (whoisLanding) { S.view = 'whois'; S.loading = false; applyRoute({ initial: true }) }
 
+    // /trace 同理: 全球路由跟踪是纯前端可视化(globalping MTR), 不依赖引擎/meta。直接深开 /trace 时
+    // 也立刻**同步**切到 trace 视图渲染, 否则首帧会落在「路由分析·正在加载查询引擎」boot 闪屏;
+    // 引擎随后在下面空闲时静默后台预载(与首页一致)。
+    const traceLanding = !whoisLanding && features.routeTrace && /^\/trace(\/|$)/.test(location.pathname)
+    if (traceLanding) { S.view = 'trace'; S.loading = false; applyRoute({ initial: true }) }
+
+    // 404 同理: 未定义的 URL 不依赖引擎/meta, 立刻同步渲染 NotFound, 不闪「路由分析·加载引擎」boot。
+    const notFoundLanding = !whoisLanding && !traceLanding && isNotFoundPath()
+    if (notFoundLanding) { S.loading = false; applyRoute({ initial: true }) }
+
     // 选定数据宿主: CN 用户(/cdn-cgi/trace loc=CN)且 VPS 健康 -> cn.peer.as, 否则同源 CF。
     // wasm 同源打包(CN 完整自托管); CF 节点超 25MiB 的 wasm 回退外部 CDN(见 db.js wasmSrcs)。
     // edge 存入 store, 供空状态显示「正在使用中国优化服务器」赞助提示。
@@ -111,7 +122,7 @@
 
     // 解析当前 URL 渲染。WHOIS 落地页上面已同步解析完, 这里只处理路由分析分支(先 await ensureEngine():
     // 34MB DuckDB + 全量 ASN 名按需懒加载, 期间保持 loading 转圈)。前进/后退经 popstate 重渲染(PJAX)。
-    if (!whoisLanding) applyRoute({ initial: true })
+    if (!whoisLanding && !traceLanding && !notFoundLanding) applyRoute({ initial: true })
 
     // 落地在 WHOIS 首页时, 引擎本不会加载。空闲时**静默后台预载**(ensureEngine 幂等), 这样之后切到「路由分析」无感秒开;
     // 不阻塞首屏/RDAP, 也不影响 WHOIS 视图(其忽略 S.loading)。meta 缺失则跳过(路由本就不可用)。
@@ -143,7 +154,9 @@
       <MobileBar />
       <Topbar />
       <div class="content">
-        {#if S.fatal}
+        {#if S.notFound}
+          <NotFound target={S.notFound.target} />
+        {:else if S.fatal}
           <div class="fatal"><b>×</b> {S.fatal}</div>
         {:else if S.loading}
           <div class="boot"><Fa icon={iSpinner} spin /> <span>{S.msg || t('loading')}</span></div>

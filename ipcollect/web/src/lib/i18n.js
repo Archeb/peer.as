@@ -24,6 +24,10 @@ export const STRINGS = {
     searching_global: '全表 AS_PATH 搜索中（扫描全表，可能较慢）…',
     col_prefix: '前缀', col_origin: 'origin asn', col_loc: '位置', col_path: '#path',
     col_seg: '本段', col_match: '匹配 path', no_results: '无结果', no_data_cc: '该国家暂无数据',
+    // 404 —— 通用「页面未找到」守卫(整站, 非仅路由)
+    nf_title: '页面未找到', nf_back: '返回上一页',
+    nf_desc: '这个地址不在本站——可能链接已失效、地址输入有误，或对应记录尚未收录。',
+    nf_target: '请求地址', nf_you: '你', nf_edge: '边缘节点', nf_reached: '已抵达', nf_noresp: '无响应',
     // ── 结果分页 + CSV 导出 ──
     page_prev: '上一页', page_next: '下一页', page_n: '第 {n} 页', export_btn: '导出',
     exp_title: '导出 CSV', exp_desc: '选择要导出的列；导出当前搜索的全部匹配结果。',
@@ -158,6 +162,10 @@ export const STRINGS = {
     exp_irr: 'IRR status', exp_moas: 'MOAS origins', exp_best: 'Best path', exp_segs: 'Sub-prefixes',
     col_prefix: 'Prefix', col_origin: 'origin asn', col_loc: 'Location', col_path: '#path',
     col_seg: 'Segs', col_match: 'matched path', no_results: 'no results', no_data_cc: 'No data for this country',
+    // 404 — general "page not found" guard (whole site, not only routing)
+    nf_title: 'Page not found', nf_back: 'Go back',
+    nf_desc: "This address isn't on our site — the link may be broken, mistyped, or the record isn't indexed yet.",
+    nf_target: 'Requested', nf_you: 'you', nf_edge: 'edge', nf_reached: 'reached', nf_noresp: 'no response',
     no_cover: 'no prefix covers this IP', query_failed: 'Query failed',
     paths_all: 'All distinct paths', sup: 'Larger (covering)', sub: 'More specific', none_in_db: 'none in DB',
     graph_title: 'Route graph · origin → upstream / Tier-1', segs_title: 'Segments actually routed here (CIDR)',

@@ -758,6 +758,7 @@ export function clearDetail() { closeDetailState() }
 // 点 LOGO 回首页。peeras: WHOIS 首页(/); dn42(无 whoisView): 路由分析干净落地页(/)。均清详情/筛选/结果。
 export function goHome() {
   closeDetailState()
+  S.notFound = null         // 离开 404
   S.probeExpanded = false   // 回首页复位「你的接入」摊开网格
   Object.assign(S.filters, { cc: '', city: '', person: '', path: '', origin: '', ip: '', limit: 500, incllow: false, fam: 'all' })
   S.dns = null; S.asset = null; S.rows = []; S.msg = ''
@@ -846,6 +847,7 @@ export async function exportCsv(keys) {
 
 // 顶层视图切换(侧栏 / 移动菜单)。各视图保留自身 S 状态, 仅翻 S.view + 还原对应 URL(入历史栈, 可前进/后退)。
 export function setView(v) {
+  S.notFound = null   // 切视图(侧栏/移动菜单)离开 404
   if (v === 'whois') {
     S.probeExpanded = false   // 从「IP 探测」摊开态/其它视图回首页时收起网格
     S.view = 'whois'
@@ -913,6 +915,29 @@ async function openPrefixByString(s) {
   } catch (e) { /* 无精确匹配则仅显示子网搜索结果 */ }
 }
 
+// 本站「已定义」的路径形态白名单(供 applyRoute 的 404 守卫用)。传入的 path 已去掉首尾斜杠并解码。
+// 注意: 首页('')、whois/、trace/、probe 在 applyRoute 中已先行处理并 return, 不会走到这里; 故此处
+// 只需覆盖剩余的「对象/视图」路由。名称搜索不占路径(走 /?q=), 故 name/text 一律视为未知 -> 404。
+function isKnownRoute(path) {
+  if (path === 'advanced') return true                                  // 路由分析空落地页
+  if (/^networks(\/[A-Za-z]{2}(\/\d{1,4})?)?$/.test(path)) return true  // 国家目录(SSR) /networks[/<cc>[/<page>]]
+  if (/^asset\/.+/.test(path)) return true                             // /asset/<as-set 键>
+  if (/^dns\/.+/.test(path)) return true                              // /dns/<域名>
+  const k = classifyQuery(path).kind                                   // 其余: 仅 ASN / IPv4 / IPv6·前缀 是合法对象路由
+  return k === 'asn' || k === 'ipv4' || k === 'ipv6'
+}
+
+// 给 App.onMount 同步预判「直开此 URL 是否会落到 404」—— 与下面 applyRoute 的 404 守卫完全同源。
+// 404 不依赖引擎/meta, 应像 whois/trace 一样首帧直出 NotFound, 不闪「正在加载查询引擎」。
+export function isNotFoundPath() {
+  if (typeof location === 'undefined') return false
+  const path = decodeURIComponent(location.pathname).replace(/^\/+/, '').replace(/\/+$/, '')
+  if (path === '') return false                                                          // 首页
+  if (features.whoisView && (path === 'whois' || path.startsWith('whois/') || path === 'probe')) return false
+  if (features.routeTrace && (path === 'trace' || path.startsWith('trace/'))) return false
+  return !isKnownRoute(path)
+}
+
 // 解析 URL(路径 /<asn|prefix> 或 ?q=<词>)并渲染。initial=首次加载(种 history.state.idx); 否则 popstate。
 export async function applyRoute({ initial = false } = {}) {
   _suppressUrl = true
@@ -923,6 +948,7 @@ export async function applyRoute({ initial = false } = {}) {
     const sp = new URLSearchParams(location.search)
     const q0 = sp.get('q')
     const path = decodeURIComponent(location.pathname).replace(/^\/+/, '').replace(/\/+$/, '')
+    S.notFound = null                              // 每次路由都先清 404 态(上次 404 -> 这次正常路由即恢复)
     S.view = 'routing'                             // 默认顶层视图; whois 分支改 'whois'(从 whois 后退到路由 URL 即自动复位)
     // peeras 首页 = WHOIS 视图: 空路径且无 ?q(落地页), 以及 /whois[/<q>] 深链。纯 RDAP, 不碰引擎。
     // dn42(无 whoisView)空路径仍走下面的路由空落地页, 不进 whois。
@@ -942,6 +968,15 @@ export async function applyRoute({ initial = false } = {}) {
       if (path !== 'trace' && typeof history !== 'undefined') {
         history.replaceState(history.state || { idx: S.nav.idx }, '', nt ? `/trace?nt=${encodeURIComponent(nt)}` : '/trace')
       }
+      return
+    }
+    // ── 通用路由守卫(404)──────────────────────────────────────────────
+    // 走到这里说明已排除首页 / whois / trace / probe 等已处理的视图路由。
+    // 只放行本站**已定义**的路径形态;其余任何乱打的 URL 一律 404(整站守卫, 不限于路由服务,
+    // 也不必加载 34MB 查询引擎)。真正的「按名称搜索」走 /?q=(下面的 q0 分支), 不占用路径。
+    if (path && !isKnownRoute(path)) {
+      S.loading = false
+      S.notFound = { target: decodeURIComponent(location.pathname) }
       return
     }
     // 路由分析需 DuckDB 引擎: 懒加载(首次), 就绪后再跑下面的 runSearch/runDns/runAsSet。失败则 S.fatal 已置, 直接退出。

@@ -54,7 +54,8 @@ export async function fetchTrace() {
     const kv = {}
     for (const line of txt.split('\n')) { const i = line.indexOf('='); if (i > 0) kv[line.slice(0, i)] = line.slice(i + 1) }
     if (!kv.ip) return null
-    return { ip: kv.ip, cc: (kv.loc || '').toUpperCase() }
+    // colo = CF 边缘数据中心代码(如 SJC); edge = 自托管 CN 镜像专有标记(real CF 不返回)。
+    return { ip: kv.ip, cc: (kv.loc || '').toUpperCase(), colo: kv.colo || '', edge: kv.edge || '' }
   } catch (e) { return null }
 }
 
