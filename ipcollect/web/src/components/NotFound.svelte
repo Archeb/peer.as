@@ -37,10 +37,9 @@
     if (tr && tr !== 'timeout') apply(tr); else p.then(apply)
     ready = true
 
-    const reduce = typeof matchMedia !== 'undefined' && matchMedia('(prefers-reduced-motion: reduce)').matches
-    if (reduce) { step = 5; return }                       // 减弱动效: 直接全显
+    // 逐行落下(每行 130ms): 始终按节奏揭示, 减弱动效时退化为纯淡入(见 CSS), 不取消顺序。
     const tick = () => { step += 1; if (step < 5) setTimeout(tick, 130) }
-    setTimeout(tick, 60)                                   // 逐行落下(每行 130ms)
+    setTimeout(tick, 60)
   })
 
   function back() {
@@ -127,13 +126,17 @@
   .fail .x { font-weight: 700; }
   .fail .code { margin-left: auto; font-size: 15px; font-weight: 700; letter-spacing: .5px; }
 
-  /* 逐行落下: 行始终在 DOM, 靠 .show 切换 opacity/位移过渡(可靠, 不受插入时机影响) */
-  .row { opacity: 0; transform: translateY(5px); transition: opacity .3s ease, transform .3s ease; }
-  .row.show { opacity: 1; transform: none; }
+  /* 逐行落下: 行始终在 DOM(高度恒定), .show 落上时跑一次 keyframe。
+     用 animation 而非 transition —— class 一加上即可靠地播放一次, 不受首帧/批量时机影响。 */
+  .row { opacity: 0; }
+  .row.show { animation: nf-drop .34s ease both; }
+  @keyframes nf-drop { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+  /* 减弱动效: 仍按顺序揭示, 但只淡入、不位移; 卡片不浮入 */
   @media (prefers-reduced-motion: reduce) {
-    .row { transition: none; }
+    .row.show { animation: nf-fade .34s ease both; }
     .card { animation: none; }
   }
+  @keyframes nf-fade { from { opacity: 0; } to { opacity: 1; } }
 
   h1 { margin: 8px 0 0; font: 600 19px/1.3 var(--sans); color: var(--fg); }
   .lede { margin: 0; max-width: 388px; color: var(--muted); font: 13px/1.65 var(--sans); }
