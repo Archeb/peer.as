@@ -1,0 +1,19 @@
+{
+  "name": "PEER.AS — BGP, IP & ASN Insights",
+  "short_name": "PEER.AS",
+  "description": "Open-source, modern and powerful online BGP Looking Glass and IP/ASN analysis tool. Explore global BGP routing, IP prefixes, ASNs, AS_PATH, origins and peering.",
+  "lang": "en",
+  "dir": "ltr",
+  "start_url": ".",
+  "scope": ".",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0a0e15",
+  "theme_color": "#0a0e15",
+  "categories": ["utilities", "developer", "productivity"],
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

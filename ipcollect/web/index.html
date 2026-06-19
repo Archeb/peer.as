@@ -6,6 +6,15 @@
   <base href="/" />
   <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <!-- PWA: 可安装为桌面/主屏应用(独立窗口)。SW 已在 main.js 注册, 数据缓存维持现状(HTTP 缓存 + ?v=) -->
+  <link rel="manifest" href="./manifest.webmanifest" />
+  <meta name="theme-color" content="#f6f8fa" media="(prefers-color-scheme: light)" />
+  <meta name="theme-color" content="#0a0e15" media="(prefers-color-scheme: dark)" />
+  <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="PEER.AS" />
   <title>PEER.AS — BGP, IP & ASN Insights</title>
   <meta name="description" content="PEER.AS — explore global BGP routing, IP prefixes, ASNs, AS_PATH, origins and peering. An open-source, modern and powerful online BGP Looking Glass and IP/ASN analysis tool." />
   <meta name="keywords" content="peer.as,BGP,ASN,IP,prefix,AS_PATH,looking glass,peering,routing,whois,IP lookup,ASN lookup,BGP tools,IP info" />

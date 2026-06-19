@@ -10,6 +10,10 @@
     "/favicon.svg",
     "/icons.svg",
     "/dmit.svg",
+    "/manifest.webmanifest",
+    "/icon-192.png",
+    "/icon-512.png",
+    "/apple-touch-icon.png",
     "/sitemap.xml",
     "/sitemaps/*",
     "/robots.txt"
