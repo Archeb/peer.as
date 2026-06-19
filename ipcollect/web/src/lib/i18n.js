@@ -5,7 +5,7 @@ import { OVERRIDES } from './i18n.dn42.js'
 export const STRINGS = {
   zh: {
     page_title: 'PEER.AS — BGP / IP / ASN 信息洞察',
-    page_desc: 'PEER.AS — 探索全球 BGP 路由：IP 前缀、ASN、AS_PATH、origin 与对端。纯静态、可复现的 BGP looking glass 与 IP/ASN 信息工具。',
+    page_desc: 'PEER.AS — 探索全球 BGP 路由：IP 前缀、ASN、AS_PATH、origin 与对端。一个开源、现代、强大的在线 BGP Looking Glass 和 IP/ASN 分析工具。',
     overview: '概览', t_prefix: '前缀', t_prefix4: 'IPv4 前缀', t_prefix6: 'IPv6 前缀', t_paths: 'path 观测',
     fam_all: '全部', fam_label: '地址族(全部 / IPv4 / IPv6)',
     t_country: '国家/地区', t_gen: '生成', legend: '图例', best: '最优路径（流量实际走）',
@@ -133,7 +133,7 @@ export const STRINGS = {
   },
   en: {
     page_title: 'PEER.AS — BGP, IP & ASN Insights',
-    page_desc: 'PEER.AS — explore global BGP routing, IP prefixes, ASNs, AS_PATH, origins and peering. A fast, static, reproducible BGP looking glass and IP/ASN intelligence tool.',
+    page_desc: 'PEER.AS — explore global BGP routing, IP prefixes, ASNs, AS_PATH, origins and peering. An open-source, modern and powerful online BGP Looking Glass and IP/ASN analysis tool.',
     overview: 'Overview', t_prefix: 'Prefixes', t_prefix4: 'IPv4 prefixes', t_prefix6: 'IPv6 prefixes',
     fam_all: 'All', fam_label: 'Address family (All / IPv4 / IPv6)',
     t_paths: 'Path obs', t_country: 'Countries', t_gen: 'Generated', legend: 'Legend',

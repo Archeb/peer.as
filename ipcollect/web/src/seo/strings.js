@@ -75,15 +75,15 @@ export function entryText(lang, page, brand) {
   const T = {
     home: {
       zh: { h1: `${brand} — 全球 BGP · IP · ASN 情报`,
-        sum: `${brand} 是一个快速、静态、可复现的 BGP looking glass 与 IP/ASN 情报工具:查询任意 IP 前缀、`
+        sum: `${brand} 是一个开源、现代、强大的在线 BGP Looking Glass 和 IP/ASN 分析工具:查询任意 IP 前缀、`
           + `自治系统(ASN)、AS_PATH、origin 与对等关系,基于多采集点公开 MRT 全表的回程路由分析。`,
         title: `${brand} — BGP, IP & ASN 情报 · looking glass`,
-        desc: `查询全球 BGP 路由、IP 前缀、ASN、AS_PATH、origin 与对等关系。快速、静态、可复现的 BGP looking glass 与 IP/ASN 情报工具。` },
+        desc: `查询全球 BGP 路由、IP 前缀、ASN、AS_PATH、origin 与对等关系。一个开源、现代、强大的在线 BGP Looking Glass 和 IP/ASN 分析工具。` },
       en: { h1: `${brand} — Global BGP, IP & ASN Insights`,
-        sum: `${brand} is a fast, static, reproducible BGP looking glass and IP/ASN intelligence tool: look up any IP `
+        sum: `${brand} is an open-source, modern and powerful online BGP Looking Glass and IP/ASN analysis tool: look up any IP `
           + `prefix, Autonomous System (ASN), AS_PATH, origins and peering, from multi-collector public MRT full-table backhaul routing.`,
         title: `${brand} — BGP, IP & ASN Insights · looking glass`,
-        desc: `Explore global BGP routing, IP prefixes, ASNs, AS_PATH, origins and peering. A fast, static, reproducible BGP looking glass and IP/ASN intelligence tool.` },
+        desc: `Explore global BGP routing, IP prefixes, ASNs, AS_PATH, origins and peering. An open-source, modern and powerful online BGP Looking Glass and IP/ASN analysis tool.` },
     },
     advanced: {
       zh: { h1: `${brand} 路由分析`,
