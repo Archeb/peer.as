@@ -28,7 +28,7 @@ const [_SPW, _SPH, , , _SPD] = iSpinner.icon
 const SPINNER = `<svg viewBox="0 0 ${_SPW} ${_SPH}" fill="currentColor" aria-hidden="true"><path d="${_SPD}"/></svg>`
 
 // ── isolate 级缓存(promise) ──────────────────────────────────────────
-let _asnP, _asnamesP, _assetP, _netP, _ctx
+let _asnP, _asnamesP, _assetP, _netP, _metaP, _ctx
 // 数据源(每个 isolate 首请求设一次):
 //  - dn42:同源 env.ASSETS(无独立数据项目)。
 //  - peeras:默认从 **data.peer.as 跨源** fetch(CF Pages 部署,前端项目不含 /data)。
@@ -51,6 +51,21 @@ const asnData = () => (_asnP ??= loadJson('/data/seo/asn.json'))
 const asnames = () => (_asnamesP ??= loadJson('/data/asnames.json'))
 const assetData = () => (_assetP ??= loadJson('/data/seo/asset.json'))
 const netData = () => (_netP ??= loadJson('/data/seo/networks.json'))
+const metaData = () => (_metaP ??= loadJson('/data/meta.json'))
+
+// og:image 版本号 = 最新采集点快照时刻(同 renderer 用的 snap_ts;缺则 generated_ts)。
+// 数据一刷新就变 → og:image URL 变 → Telegram 媒体缓存 / Discord / Twitter / Slack 全部
+// 重新拉到新图(治社交平台贴旧图)。renderer 只读 n/k,这个 v 参数它会忽略。
+async function ogVersion() {
+  try {
+    const m = await metaData()
+    if (!m) return null
+    const cols = m.collectors || []
+    const ts = cols.reduce((a, c) => Math.max(a, (c && c.snap_ts) || 0), 0) || m.generated_ts || 0
+    return ts || null
+  } catch { return null }
+}
+
 // 每 ASN top-N 通告前缀(ASN 落地页内链), 按 asn%256 分片 /data/seo/prefixes/<sh>.json = {asn:[[prefix,cc,n_paths],…]}。
 // 只按需读命中的那一片, 各片 promise 缓存在 isolate(避免重复拉)。缺片/旧数据 → 空列表(降级, 不列前缀)。
 const _pfxShards = new Map()
@@ -423,9 +438,12 @@ export default {
       let ogImage = null
       if (cHost === 'peer.as') {
         const OG = `https://${cHost}/og`
-        if (r.kind === 'asn') ogImage = `${OG}/asn.png?n=${r.asn}`
-        else if (r.kind === 'asset') ogImage = `${OG}/asset.png?k=${encodeURIComponent(r.key)}`
-        else ogImage = `${OG}/home.png`
+        // 数据版本号(snap_ts):数据一刷新 og:image URL 即变 → 绕过社交平台/CDN 媒体缓存拉新图。
+        const ver = await ogVersion()
+        const vq = ver ? `&v=${ver}` : ''
+        if (r.kind === 'asn') ogImage = `${OG}/asn.png?n=${r.asn}${vq}`
+        else if (r.kind === 'asset') ogImage = `${OG}/asset.png?k=${encodeURIComponent(r.key)}${vq}`
+        else ogImage = `${OG}/home.png${ver ? `?v=${ver}` : ''}`
       }
 
       const tplRes = await env.ASSETS.fetch(new URL('/index.html', base))

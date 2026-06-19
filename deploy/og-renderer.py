@@ -480,7 +480,9 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
         if cache:
-            self.send_header("Cache-Control", "public, max-age=86400")
+            # og:image URL 现在带数据版本号(?v=snap_ts),内容随版本不可变 -> 可长缓存+immutable。
+            # 数据刷新时 worker 出的 URL 变 -> 自动绕过所有 CDN/客户端缓存,不会贴旧图。
+            self.send_header("Cache-Control", "public, max-age=31536000, immutable")
         self.send_header("Access-Control-Allow-Origin", "*")
         self.end_headers()
         if self.command != "HEAD":
