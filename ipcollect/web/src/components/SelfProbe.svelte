@@ -95,7 +95,7 @@
     }).catch(() => { fams[fi].entries[ei].enriching = false })
   }
 
-  // 首页最小探测: **只**打自有 Cloudflare 域(default.peer.as 活跃出口 + ipv4.peer.as 的 v4 出口),
+  // 首页最小探测: **只**打自有端点(同源 /cdn-cgi/trace 活跃出口 + ipv4.peer.as 的 v4 出口),
   // 不向任何第三方发请求。给出基础的"你的接入"卡片, 邀请用户点开看完整出口。
   async function runHomeProbe() {
     const { defaultIp: dip } = await probeHomeIps(onSource)

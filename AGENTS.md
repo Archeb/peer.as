@@ -118,6 +118,7 @@
 - **海外 = `data.peer.as`**(数据项目)。
 - **境内 = `cn.peer.as`**(CN VPS 整站镜像，自带 `/data`)。
 - **直连 cn.peer.as / GeoDNS→CN 机器 / 本地 serve = 同源 `/data`**(本机即正确源)。
+  - **位置判定靠 `/cdn-cgi/trace`(不再靠 404)**:CF 与 CN Caddy 都返回 200+`loc=XX`,但 **CN Caddy 额外回一行 `edge=cn`**(real CF 永不返回)。`configure()`:host 是 cn.peer.as / localhost → 直接同源;否则探 trace —— 见 `edge=cn` → 同源(GeoDNS 已解到本机);real CF 且 `loc=CN` → 健康探测后切 `cn.peer.as`;否则海外。`web/src/lib/geo.js` 的 `fetchTrace` 也改走同源命中此端点(原 `default.peer.as` 子域已下线)。**部署顺序**:改了 `cn.peer.as.Caddyfile` 要**先 scp+reload VPS**再推前端,否则新前端遇旧 Caddy(仍 404)会把境内 GeoDNS 用户误判成海外。
 - 取数失败统一回退 `OVERSEAS`(data.peer.as)。**自托管 SSR 的 `_worker.js`(peeras, 跑在 VPS)读 VPS 本地 `/data`**(`env.DATA_ORIGIN` 环回, 不跨源拉 data.peer.as);dn42 已无 SSR。
 
 **数据版本/缓存**：`meta.version` 驱动 `?v=` 失效；`meta.json` no-cache。

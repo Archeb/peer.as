@@ -8,8 +8,8 @@
   let { model = null, locations = null, focusId = null, hidden = null, hideLocations = false, lockNorth = true, hold = false, mode2d = false, onpick = null, onhover = null, onlochover = null, onengine = null } = $props()
 
   let canvasEl, hitEl, tipEl, ctrl
-  // 初始视角定位到用户所在国家/地区: 用自有域 default.peer.as 的 trace 取 loc=国家码 → 国家质心经纬度。
-  // (改自第三方 cf-ns.com, 统一只打自有 Cloudflare 端点。)
+  // 初始视角定位到用户所在国家/地区: 用同源 /cdn-cgi/trace 取 loc=国家码 → 国家质心经纬度。
+  // (改自第三方 cf-ns.com, 统一只打自有端点。)
   function locateHome() {
     fetchTrace().then(tr => {
       if (tr?.cc) { const c = ccLatLon(tr.cc); ctrl?.setHome(c.lon, c.lat) }

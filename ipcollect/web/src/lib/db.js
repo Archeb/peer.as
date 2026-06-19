@@ -64,30 +64,38 @@ export async function configure() {
   // 本站无 cn.peer.as 整站镜像(profile cn_mirror=false, 如 dn42): 永远同源(其前端项目自带 /data),
   // 不做任何 CN 探测/分流, 也不碰 data.peer.as(那是 peeras 数据集, dn42 切过去会加载错 meta/parquet 直接炸)。
   if (!features.cnMirror) { DATA = SAME; return edge }
-  // 1) 直连 CN 机器(host=cn.peer.as): 同源即 CN 机器 —— 数据 /data 同源(Caddy 本地)。
-  if (location.hostname === CN_HOST) {
+  // 1) 同源即正确源的两种情形, 直接定盘(不必探 trace):
+  //    - 直连 CN 机器(host=cn.peer.as): 同源即 CN 机器, 数据 /data 同源(Caddy 本地)。
+  //    - 本地 serve(localhost/127.0.0.1/::1): 同源即本地 dist(自带 /data 与同源 wasm)。
+  //    两者均 edge='cn' —— 让 wasm 走同源优先(见 wasmSrcs: edge!='cf' 时同源优先, 否则大 wasm 直奔 CDN)。
+  const host = location.hostname
+  if (host === CN_HOST || host === 'localhost' || host === '127.0.0.1' || host === '::1' || host === '[::1]') {
     DATA = SAME; edge = 'cn'
     return edge
   }
-  // 2) 否则: 探 /cdn-cgi/trace 判断当前在 Cloudflare 还是 CN 加速机。
-  //    CF 上: 200 + 含 loc=XX。CN 加速机(GeoDNS 把 peer.as 解到本机)/本地 serve: 无此端点 -> 404。
-  let onCF = false, loc = null
+  // 2) 否则: 探 /cdn-cgi/trace。CF 与本机(CN Caddy)都返回 200 + loc=XX; 本机额外带 `edge=cn` 标记
+  //    (real CF 永不返回此字段)。据此区分"GeoDNS 把 peer.as 解到本机"与"CF 上的境内用户", 不再依赖 404。
+  let loc = null, selfCN = false, reached = false
   try {
     const r = await fetchT('/cdn-cgi/trace', { cache: 'no-store' }, 1200)
-    if (r.ok) { onCF = true; loc = (/(?:^|\n)loc=([A-Z]{2})/.exec(await r.text()) || [])[1] }
-    // r 收到但非 200(典型 404) -> onCF 保持 false -> 判定走了 CN 加速机(见下)。
-  } catch { /* 网络错误(非 404 响应): 含糊, 不强判, 保持 CF 默认 */ onCF = null }
-  if (onCF === false) {
-    // /cdn-cgi/trace 明确 404(收到响应但非 200) => 不在 Cloudflare => GeoDNS 已把 peer.as 解到 CN 加速机
-    // (或本地 serve)。数据同源(本机即正确源, Caddy 自带 /data); edge=cn 显示「中国优化服务器」赞助提示。
+    if (r.ok) {
+      const txt = await r.text()
+      reached = true
+      loc = (/(?:^|\n)loc=([A-Z]{2})/.exec(txt) || [])[1]
+      selfCN = /(?:^|\r?\n)edge=cn(?:\r?\n|$)/.test(txt)
+    }
+    // r 非 200(404 等): reached 保持 false -> 走默认 OVERSEAS(见下)。
+  } catch { /* 网络错误: 含糊, 不强判, 保持 CF 默认 */ }
+  if (selfCN) {
+    // 同源即本机 CN Caddy(GeoDNS 把 peer.as 解到本机): 数据 /data 同源, edge=cn 显示「中国优化服务器」赞助提示。
     DATA = SAME; edge = 'cn'
-  } else if (onCF && loc === 'CN') {        // 在 CF Pages 且身处境内(GeoDNS 没生效, 拿到 CF IP)
-    try {                                   // 健康探测 CN 机器: 通了才切数据, 失败保持 data.peer.as 海外源。
+  } else if (reached && loc === 'CN') {      // real CF Pages 且身处境内(GeoDNS 没生效, 拿到 CF IP)
+    try {                                    // 健康探测 CN 机器: 通了才切数据, 失败保持 data.peer.as 海外源。
       const r = await fetchT(`${CN_ORIGIN}/data/meta.json`, { cache: 'no-store' }, 2000)
       if (r.ok) { DATA = `${CN_ORIGIN}/data`; edge = 'cn' }   // wasm 随之优先走 CN 镜像(wasmSrcs)
     } catch { /* CN 机器不可达 -> 保持 data.peer.as(默认) */ }
   }
-  // else: onCF && loc!=CN (海外 CF), 或 onCF===null(网络错误) -> data.peer.as(默认 OVERSEAS), edge='cf'
+  // else: 海外 CF(loc!=CN), 或 trace 404/网络错误 -> data.peer.as(默认 OVERSEAS), edge='cf'
   return edge
 }
 

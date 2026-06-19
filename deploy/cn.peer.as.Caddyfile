@@ -59,9 +59,21 @@
 
 	# 顺序敏感, 用 route 保证按written顺序执行:
 	route {
-		# /cdn-cgi/* 在本机(非 CF)必须返回 404 —— 前端 db.js configure() 靠"探 /cdn-cgi/trace 是否 404"
-		# 判定"不在 CF=在 CN 加速机"。**必须先于 try_files**, 否则会被 SPA 回退成 index.html(200),
-		# 前端误判为海外 CF -> 国内错误走 jsDelivr(而非同源自托管 wasm)。
+		# /cdn-cgi/trace: 本机自产一份 trace(仿 Cloudflare 格式), 让前端统一靠"loc + edge 标记"判定,
+		# 不再依赖 404。返回客户端 IP + loc=CN(本机仅服务境内) + edge=cn(real CF 永不返回此字段, 前端
+		# db.js configure() 据此区分"GeoDNS 把 peer.as 解到本机"与"CF 上的境内用户")。geo.js 的 fetchTrace
+		# 也改走同源命中这里 → 地球/接入卡片在 CN 机器上也能拿到 IP/loc。**必须先于 try_files**, 否则被 SPA
+		# 回退成 index.html(200)。CORS 由 (site) 顶部的 header(defer)统一加, 跨域 fetch 可读。
+		@trace path /cdn-cgi/trace
+		handle @trace {
+			header Content-Type "text/plain; charset=utf-8"
+			header Cache-Control "no-store"
+			respond `ip={client_ip}
+loc=CN
+edge=cn
+` 200
+		}
+		# 其余 /cdn-cgi/*(real CF 专有路径)在本机一律 404, 别被 SPA 回退吞成 200。
 		@cdncgi path /cdn-cgi/*
 		respond @cdncgi 404
 

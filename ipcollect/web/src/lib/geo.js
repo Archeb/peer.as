@@ -42,8 +42,10 @@ export const CC_CENTROID = {
   ZA:[-29.0,24.0], EG:[26.8,30.8], NG:[9.1,8.7], KE:[0.2,37.9],
 }
 
-// cloudflare trace: 取用户连接 IP(ip)与国家(loc)。失败返回 null(不阻塞页面)。
-const TRACE_URL = 'https://default.peer.as/cdn-cgi/trace'
+// trace: 取用户连接 IP(ip)与国家(loc)。失败返回 null(不阻塞页面)。
+// 走**同源** /cdn-cgi/trace: 海外/CF 节点 = 真 CF trace(真实 loc); GeoDNS 把 peer.as 解到本机(CN Caddy)
+// = 自产 trace(loc=CN)。原 default.peer.as 子域已下线, 故不再用它。
+const TRACE_URL = (typeof location !== 'undefined' ? location.origin : 'https://peer.as') + '/cdn-cgi/trace'
 export async function fetchTrace() {
   try {
     const r = await fetch(TRACE_URL, { cache: 'no-store' })
@@ -272,11 +274,11 @@ function normalizeIp(ip) {
 }
 
 // ── 首页最小探测(仅自有 Cloudflare 域, 隐私优先)─────────────────────────
-// 首页只请求我们自己的两个 Cloudflare 端点: default.peer.as(活跃栈出口) + ipv4.peer.as(强制 v4 出口),
+// 首页只请求我们自己的两个端点: 同源 /cdn-cgi/trace(活跃栈出口) + ipv4.peer.as(强制 v4 出口),
 // **绝不在首页向任何第三方域名发请求**。完整的多出口发现(probeEgressIps + STUN, 含第三方 cdn-cgi/trace)
 // 留到用户主动点开 IPv4/IPv6 时才跑。onSource 回调与 probeEgressIps 同构, 组件可共用同一汇入口。
 const OWN_TRACE = [
-  { url: TRACE_URL, name: 'PEER.AS' },                            // default.peer.as: 活跃栈(浏览器优选)出口
+  { url: TRACE_URL, name: 'PEER.AS' },                            // 同源 /cdn-cgi/trace: 活跃栈(浏览器优选)出口
   { url: 'https://ipv4.peer.as/cdn-cgi/trace', name: 'PEER.AS' },  // ipv4.peer.as: 强制 v4 出口(A-only 主机)
 ]
 export async function probeHomeIps(onSource) {
@@ -286,7 +288,7 @@ export async function probeHomeIps(onSource) {
     const ip0 = await traceIp(s.url)
     if (!ip0) return
     const ip = normalizeIp(ip0)
-    if (i === 0) defaultIp = ip                                  // default.peer.as = 活跃栈出口
+    if (i === 0) defaultIp = ip                                  // 同源 /cdn-cgi/trace = 活跃栈出口
     if (onSource) { try { onSource(ip, { name: s.name, host: hostOf(s.url) }) } catch (e) { /* UI 回调异常不拖累探测 */ } }
   }))
   return { defaultIp }
