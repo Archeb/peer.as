@@ -73,7 +73,6 @@
     const edgeMeta = new Map()       // 边键 -> {au,du,av,dv,span}
     const nodeEdges = {}             // asn -> Set(边键): 经过该 AS 的所有路径的全部边(hover 用)
     const nodeCells = {}             // asn -> Set("asn:距离"): 经过该 AS 的所有路径上的全部格子(hover 虚化, 按格子而非按 ASN)
-    const adj = {}                   // asn -> Set(asn): 布局排序用的无向邻接
     for (const p of raw) {
       const a = truncToTier1(rawOf(p)), n = a.length, w = p.peers || 1
       // 折叠 prepend: 从 origin(末)往上游(头)走, 距离 d 照常计入被吃的列; 同 AS 连续只建一个节点(最小 d)。
@@ -86,8 +85,7 @@
         const k = ek2(hi.asn, hi.d, lo.asn, lo.d)
         edgeW.set(k, (edgeW.get(k) || 0) + w)
         if (!edgeMeta.has(k)) edgeMeta.set(k, { au: hi.asn, du: hi.d, av: lo.asn, dv: lo.d, span: hi.d - lo.d })
-        ek.push(k);
-        (adj[hi.asn] = adj[hi.asn] || new Set()).add(lo.asn); (adj[lo.asn] = adj[lo.asn] || new Set()).add(hi.asn)
+        ek.push(k)
       }
       const pas = new Set(seq.map(s => s.asn)), pcells = seq.map(s => s.asn + ':' + s.d)
       for (const node of pas) {
@@ -112,23 +110,44 @@
     let maxD = 0; for (const s of cellD.values()) for (const d of s) if (d > maxD) maxD = d
     const rowP = NH + ROWG, colP = NW + COLG
     const cx = col => COLG + col * colP + NW / 2
-    const mean = ar => ar.reduce((s, v) => s + v, 0) / ar.length
-    // ── 布局(两步): ① 连续重心法得到大致 y(每列在整高内居中, 越靠 origin 的稀疏列越贴中线);
-    //    ② 量化到整行网格 ⇒ 大框各列严格对齐、不再错位。 ──
+    // ── 布局(两步): ① 树序布局定每个 AS 的理想上下顺序; ② 量化到整行网格并居中。 ──
+    // 这张图从 origin 向上游基本是一棵树(每个 AS 沿路径只有一个朝 origin 的下游, 可有多个上游)。
+    // 按树做 DFS: 叶子顺次排号, 父节点取子节点序号均值 ⇒ 父子天然对齐、同父的子连续 ⇒ 跨列连线不交叉;
+    // 兄弟里把"子树更大"的排到中间 ⇒ 主干(如 Tier-1)居中, 细碎叶子分到上下两端。
+    // (旧重心法会被大量"只连同一个父"的叶子拽向中线, 反把分叉主干挤到上下端, 大量交叉。)
     const colMembers = {}
     for (const asn of asns) for (const d of cellD.get(asn)) (colMembers[d] = colMembers[d] || []).push(asn)
     let maxCount = 1; for (const d in colMembers) maxCount = Math.max(maxCount, colMembers[d].length)
-    const mid = HEAD + ROWG / 2 + maxCount * rowP / 2
-    const Y = {}; for (const a of asns) Y[a] = mid                    // 初始全堆中线, 再迭代散开
-    for (let it = 0; it < 20; it++) {
-      const prop = {}
-      for (const d in colMembers) {
-        const L = colMembers[d].slice().sort((a, b) => (Y[a] - Y[b]) || (a - b))
-        const y0 = HEAD + ROWG / 2 + (maxCount - L.length) * rowP / 2   // 该列在整高内居中
-        L.forEach((a, j) => { const yy = y0 + j * rowP + NH / 2; (prop[a] = prop[a] || []).push(yy) })
-      }
-      for (const a of asns) Y[a] = mean(prop[a])
+    const childrenOf = {}     // 下游(小d) -> Set 上游(大d): 朝上游展开的树/DAG
+    for (const m of edgeMeta.values()) (childrenOf[m.av] = childrenOf[m.av] || new Set()).add(m.au)
+    // 子树叶子数(兄弟排序用): 越大越往中间放
+    const size = {}
+    const sz = a => {
+      if (size[a] != null) return size[a]
+      size[a] = 1                                   // 先占位防环
+      const ch = childrenOf[a]; if (!ch || !ch.size) return size[a] = 1
+      let s = 0; for (const k of ch) s += sz(k); return size[a] = s || 1
     }
+    for (const a of asns) sz(a)
+    let roots = asns.filter(a => originSet.has(a))
+    if (!roots.length) { let md = Infinity, r = asns[0]; for (const a of asns) { const dm = Math.min(...cellD.get(a)); if (dm < md) { md = dm; r = a } } roots = [r] }
+    const ord = {}, seen = new Set(); let cnt = 0
+    const dfs = a => {
+      if (seen.has(a)) return ord[a]
+      seen.add(a)
+      const all = childrenOf[a] ? [...childrenOf[a]] : []
+      if (!all.length) return ord[a] = cnt++
+      // 兄弟按子树大小降序, 再"大的居中"交替展开 ⇒ 主干在中、碎叶在缘
+      const byBig = all.filter(k => !seen.has(k)).sort((x, y) => (size[y] - size[x]) || (x - y))
+      const centered = []
+      byBig.forEach((k, i) => i % 2 ? centered.push(k) : centered.unshift(k))
+      const vs = []
+      for (const k of centered) vs.push(dfs(k))
+      for (const k of all) if (ord[k] != null && !centered.includes(k)) vs.push(ord[k])   // DAG 已访问子也计入对齐
+      return ord[a] = vs.length ? vs.reduce((s, v) => s + v, 0) / vs.length : cnt++
+    }
+    for (const r of roots) dfs(r)
+    const Y = {}; for (const a of asns) Y[a] = ord[a] != null ? ord[a] : cnt++   // 兜底: 不连通残余 → 顺次排尾
     // ② 量化到整行网格(R = 最密列节点数行)。每列成员按 y 放进各自"居中块";
     //    跨距离 AS 先在它最稀疏(块最小、最居中)的列定行, 到更密的列沿用同一行 ⇒ 各列同一行、严格对齐。
     const start = {}; for (const d in colMembers) start[d] = Math.round((maxCount - colMembers[d].length) / 2)
@@ -138,7 +157,11 @@
       const members = colMembers[d].slice().sort((a, b) => (Y[a] - Y[b]) || (a - b))
       const taken = new Set(); for (const a of members) if (rowOf[a] != null) taken.add(rowOf[a])
       let ptr = start[d]
-      for (const a of members) { if (rowOf[a] != null) continue; while (taken.has(ptr)) ptr++; rowOf[a] = ptr; taken.add(ptr); ptr++ }
+      // 已定行的成员(来自更稀疏的列)保持原行, 但把 ptr 推到其后 ⇒ 后续(y 更大的)新成员落在它下方, 保持 y 单调、不互相穿插。
+      for (const a of members) {
+        if (rowOf[a] != null) { ptr = Math.max(ptr, rowOf[a] + 1); continue }
+        while (taken.has(ptr)) ptr++; rowOf[a] = ptr; taken.add(ptr); ptr++
+      }
     }
     let maxRow = 0; for (const a of asns) maxRow = Math.max(maxRow, rowOf[a])
     for (const a of asns) Y[a] = HEAD + ROWG / 2 + rowOf[a] * rowP + NH / 2
