@@ -41,15 +41,14 @@
     el.scrollLeft = cx * nz - ox; el.scrollTop = cy * nz - oy
   }
   async function onWheel(e) {
-    // macOS 触控板「捏合」= wheel + ctrlKey(Chrome/FF/Safari 通用); Ctrl/⌘+滚轮同理。
+    // 滚轮 = 缩放(以光标为锚)。macOS 触控板「捏合」也走这里(wheel + ctrlKey, Chrome/FF/Safari 通用);
+    // ctrlKey 下 deltaY 量级小很多 ⇒ 单独放大系数, 让捏合与普通滚轮手感一致。
     // 按 deltaY **比例**取指数系数 ⇒ 平滑连续, 不再每事件固定一格(触控板会狂发小 delta, 固定步长就卡)。
-    if (e.ctrlKey) {
-      e.preventDefault()
-      const el = e.currentTarget, r = el.getBoundingClientRect()
-      const dy = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY      // 行模式换算成像素
-      await zoomAt(el, e.clientX - r.left, e.clientY - r.top, zoom * Math.exp(-dy * 0.01))
-    }
-    // 否则(普通滚轮 / 触控板双指滚动): 不拦截, 交给容器原生滚动平移 ⇒ 最丝滑
+    e.preventDefault()
+    const el = e.currentTarget, r = el.getBoundingClientRect()
+    const dy = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY        // 行模式换算成像素
+    const k = e.ctrlKey ? 0.01 : 0.0015
+    await zoomAt(el, e.clientX - r.left, e.clientY - r.top, zoom * Math.exp(-dy * k))
   }
   function mDown(e) {
     if (e.pointerType === 'mouse' && e.button !== 0) return
@@ -467,7 +466,7 @@
   /* 分组靠细分隔线, 按钮本身无底色 */
   .gdiv { width: 1px; height: 18px; background: color-mix(in srgb, var(--line) 90%, transparent); margin: 0 3px; }
   .gbtn { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 9px; border: 0; border-radius: 7px;
-    background: none; color: var(--muted); font: 600 11.5px var(--mono); letter-spacing: .02em; line-height: 1;
+    background: none; color: var(--muted); font: 600 11.5px var(--sans); letter-spacing: .02em; line-height: 1;
     cursor: pointer; transition: color .12s; }
   .gbtn :global(svg) { width: 13px; height: 13px; flex: 0 0 auto; }
   .gbtn.ic { width: 28px; padding: 0; justify-content: center; }
