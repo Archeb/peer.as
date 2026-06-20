@@ -72,4 +72,7 @@ export {
   faUser as iUser,
   faDatabase as iDb,
   faDownload as iDownload,
+  faCopy as iCopy,
+  faMagnifyingGlassPlus as iZoomIn,
+  faMagnifyingGlassMinus as iZoomOut,
 } from '@fortawesome/free-solid-svg-icons'

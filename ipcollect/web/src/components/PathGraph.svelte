@@ -1,37 +1,193 @@
 <script>
+  import { tick } from 'svelte'
+  import Fa from 'svelte-fa'
+  import { iClose, iZoomIn, iZoomOut, iCopy, iDownload, iCheck } from '../lib/icons.js'
   import { truncToTier1, asnName, TIER1 } from '../lib/bgp.js'
   import { showAsn } from '../lib/queries.js'
   let { rec } = $props()
   const goKey = (e, asn) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); showAsn(asn) } }
 
+  // ── 全屏模态 ──
+  // 内嵌图常被抽屉宽度压扁; 点「全屏」按钮 → 整页深色遮罩, 图居中, 可拖拽/缩放看全貌。
+  let full = $state(false)
+  const openFull = () => { zoom = 1; full = true }
+  const closeFull = () => { full = false; mptrs.clear(); mpan = null; pinch = null; dragging = false }
+  // 抽屉(.floatwin)有 backdrop-filter ⇒ 给 position:fixed 后代造了新的包含块, 模态会被框死在抽屉内、
+  // 盖不住整页(左侧主页面露出来还压在上面)。用 portal 把模态搬到挂载根 #app 下(脱离该包含块);
+  // 仍在 #app 子树内 ⇒ Svelte 5 的 click 事件委托照常生效。
+  function portal(node) {
+    const root = document.getElementById('app') || document.body
+    root.appendChild(node)
+    return { destroy() { node.remove() } }
+  }
+
+  // ── 全屏图交互: svg 始终 1:1 等比(viewBox 不变, 出图尺寸 = g.W×g.H × zoom ⇒ 矢量缩放不糊),
+  //    支持 滚轮缩放 / 双指捏合缩放 / 拖拽平移; 缩放都以光标(或两指中点)为锚, 该点保持不动。 ──
+  let zoom = $state(1)
+  let dragging = $state(false)   // 仅光标反馈
+  let fwrap = $state(null)       // 全屏滚动容器(按钮缩放/重置用)
+  const ZMIN = 0.2, ZMAX = 6
+  const mptrs = new Map()        // 活跃指针: pid -> {x,y}
+  let mpan = null                // 单指/单击拖拽
+  let pinch = null               // 双指捏合: {d0,z0,ox,oy,cx,cy,el}
+  const pdist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y)
+  // 以容器内锚点(ox,oy=相对容器左上像素)缩放到 nz, 保持锚点不动(先改 zoom→tick 等 DOM 重排→再回滚动)
+  async function zoomAt(el, ox, oy, nz) {
+    nz = Math.min(ZMAX, Math.max(ZMIN, nz))
+    if (nz === zoom || !el) return
+    const cx = (el.scrollLeft + ox) / zoom, cy = (el.scrollTop + oy) / zoom
+    zoom = nz
+    await tick()
+    el.scrollLeft = cx * nz - ox; el.scrollTop = cy * nz - oy
+  }
+  async function onWheel(e) {
+    // macOS 触控板「捏合」= wheel + ctrlKey(Chrome/FF/Safari 通用); Ctrl/⌘+滚轮同理。
+    // 按 deltaY **比例**取指数系数 ⇒ 平滑连续, 不再每事件固定一格(触控板会狂发小 delta, 固定步长就卡)。
+    if (e.ctrlKey) {
+      e.preventDefault()
+      const el = e.currentTarget, r = el.getBoundingClientRect()
+      const dy = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY      // 行模式换算成像素
+      await zoomAt(el, e.clientX - r.left, e.clientY - r.top, zoom * Math.exp(-dy * 0.01))
+    }
+    // 否则(普通滚轮 / 触控板双指滚动): 不拦截, 交给容器原生滚动平移 ⇒ 最丝滑
+  }
+  function mDown(e) {
+    if (e.pointerType === 'mouse' && e.button !== 0) return
+    mptrs.set(e.pointerId, { x: e.clientX, y: e.clientY })
+    justPanned = false
+    const el = e.currentTarget
+    if (mptrs.size === 2) {                                   // 进入捏合: 记中点与起始间距
+      const [a, b] = [...mptrs.values()], r = el.getBoundingClientRect()
+      const mx = (a.x + b.x) / 2 - r.left, my = (a.y + b.y) / 2 - r.top
+      pinch = { d0: pdist(a, b) || 1, z0: zoom, ox: mx, oy: my, cx: (el.scrollLeft + mx) / zoom, cy: (el.scrollTop + my) / zoom, el }
+      mpan = null
+    } else if (mptrs.size === 1) {                            // 单指: 暂不捕获(留给节点 click), 越阈值才拖
+      mpan = { sx: e.clientX, sy: e.clientY, left: el.scrollLeft, top: el.scrollTop, moved: false, pid: e.pointerId, el }
+    }
+  }
+  async function mMove(e) {
+    if (!mptrs.has(e.pointerId)) return
+    mptrs.set(e.pointerId, { x: e.clientX, y: e.clientY })
+    if (pinch && mptrs.size >= 2) {
+      const [a, b] = [...mptrs.values()]
+      const nz = Math.min(ZMAX, Math.max(ZMIN, pinch.z0 * pdist(a, b) / pinch.d0))
+      if (nz !== zoom) { zoom = nz; await tick(); pinch.el.scrollLeft = pinch.cx * nz - pinch.ox; pinch.el.scrollTop = pinch.cy * nz - pinch.oy }
+      return
+    }
+    if (mpan) {
+      const dx = e.clientX - mpan.sx, dy = e.clientY - mpan.sy
+      if (!mpan.moved && (Math.abs(dx) > 3 || Math.abs(dy) > 3)) { mpan.moved = true; dragging = true; mpan.el.setPointerCapture?.(mpan.pid) }
+      if (!mpan.moved) return
+      mpan.el.scrollLeft = mpan.left - dx; mpan.el.scrollTop = mpan.top - dy
+    }
+  }
+  function mUp(e) {
+    mptrs.delete(e.pointerId)
+    if (mpan && mpan.pid === e.pointerId) { if (mpan.moved) { justPanned = true; mpan.el.releasePointerCapture?.(mpan.pid) } mpan = null; dragging = false }
+    if (mptrs.size < 2) pinch = null
+  }
+  // 按钮缩放: 以容器中心为锚
+  const zoomBtn = f => { if (fwrap) { const r = fwrap.getBoundingClientRect(); zoomAt(fwrap, r.width / 2, r.height / 2, zoom * f) } }
+  const resetZoom = async () => { zoom = 1; await tick(); if (fwrap) { fwrap.scrollLeft = 0; fwrap.scrollTop = 0 } }
+
+  // ── 导出 SVG / PNG ── 独立文件没有外部 CSS, 故把计算样式内联到每个元素; 并还原成 1:1 自然尺寸(去 zoom)。
+  const EXPORT_PROPS = ['fill', 'stroke', 'stroke-width', 'stroke-dasharray', 'stroke-linecap', 'stroke-linejoin',
+    'opacity', 'font-family', 'font-size', 'font-weight', 'text-anchor', 'dominant-baseline']
+  const exportName = () => `peeras-${(rec?.prefix || 'graph').replace(/[^\w.]+/g, '_')}`
+  async function buildExportSvg() {
+    // 先清掉 hover/选中, 确保导出的是干净全图(否则会把虚化/高亮态烤进去)
+    hovered = null; selected = null
+    await tick()
+    const live = (fwrap || document).querySelector('svg.pathsvg')
+    if (!live) return null
+    const clone = live.cloneNode(true)
+    clone.setAttribute('width', g.W); clone.setAttribute('height', g.H)
+    clone.setAttribute('viewBox', `0 0 ${g.W} ${g.H}`)
+    clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg')
+    const src = live.querySelectorAll('*'), dst = clone.querySelectorAll('*')
+    for (let i = 0; i < src.length; i++) {
+      const cs = getComputedStyle(src[i])
+      let s = ''
+      for (const p of EXPORT_PROPS) { const v = cs.getPropertyValue(p); if (v && v !== 'normal') s += `${p}:${v};` }
+      dst[i].setAttribute('style', s); dst[i].removeAttribute('class')
+    }
+    return clone
+  }
+  async function exportStr() {
+    const el = await buildExportSvg(); if (!el) return null
+    return '<?xml version="1.0" encoding="UTF-8"?>\n' + new XMLSerializer().serializeToString(el)
+  }
+  function dl(blob, name) {
+    const url = URL.createObjectURL(blob), a = document.createElement('a')
+    a.href = url; a.download = name; a.click()
+    setTimeout(() => URL.revokeObjectURL(url), 2000)
+  }
+  async function exportSvg() {
+    const str = await exportStr(); if (!str) return
+    dl(new Blob([str], { type: 'image/svg+xml' }), `${exportName()}.svg`)
+  }
+  // 2× 光栅化为 PNG blob; white=true 先铺白底, 否则透明。供下载与复制共用。
+  async function renderPng(white) {
+    const str = await exportStr(); if (!str) return null
+    const scale = 2, img = new Image()
+    img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(str)
+    try { await img.decode() } catch { await new Promise(r => { img.onload = r; img.onerror = r }) }
+    const cv = document.createElement('canvas')
+    cv.width = Math.round(g.W * scale); cv.height = Math.round(g.H * scale)
+    const ctx = cv.getContext('2d')
+    if (white) { ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, cv.width, cv.height) }
+    ctx.setTransform(scale, 0, 0, scale, 0, 0)
+    ctx.drawImage(img, 0, 0, g.W, g.H)
+    return await new Promise(res => cv.toBlob(res, 'image/png'))
+  }
+  async function exportPng(white) {
+    const b = await renderPng(white); if (b) dl(b, `${exportName()}${white ? '-white' : ''}.png`)
+  }
+  // 复制到剪贴板(白底, 贴到聊天/文档里不会黑乎乎一片)。给 ClipboardItem 传 Promise<Blob> ⇒ 兼容 Safari 的用户手势要求。
+  // 注意: 写图片剪贴板需**安全上下文**(https 或 http://localhost); 经 LAN IP 的 http 不行 ⇒ 明确报「失败」, 不偷偷下载。
+  let copyState = $state('idle')   // 'idle' | 'ok' | 'fail'
+  let copyTimer = null
+  const flashCopy = s => { copyState = s; clearTimeout(copyTimer); copyTimer = setTimeout(() => copyState = 'idle', 1600) }
+  async function copyPng() {
+    if (!(window.isSecureContext && navigator.clipboard?.write && window.ClipboardItem)) {
+      console.warn('[copy] 剪贴板写图需安全上下文(HTTPS 或 http://localhost); 当前非安全上下文, 改用「PNG」下载按钮')
+      flashCopy('fail'); return
+    }
+    try {
+      await navigator.clipboard.write([new ClipboardItem({ 'image/png': renderPng(true).then(b => b || new Blob()) })])
+      flashCopy('ok')
+    } catch (e) { console.warn('[copy] 写剪贴板失败', e); flashCopy('fail') }
+  }
+
   // ── 手型拖拽平移(桌面) ──
   // PC 上原本只能拖底部滚动条, 很难用; 改成在图上按住直接左右/上下拖。
   // 触摸设备走浏览器原生滚动(pointerdown 直接 return), 不动它, 保持移动端兼容。
-  let wrap = $state(null)
-  let pan = null            // 拖拽中: { sx, sy, left, top, moved }
+  // 滚动容器取 e.currentTarget(而非单一 bind) ⇒ 内嵌图与全屏图两个容器共用同一套逻辑。
+  let pan = $state(null)    // 拖拽中: { sx, sy, left, top, moved, pid, el }
   let justPanned = false    // 刚发生过拖拽 → 吞掉随后的节点 click, 避免误触导航
   function onPanDown(e) {
     if (e.pointerType === 'touch') return            // 移动端: 原生滚动
     if (e.button !== 0) return                        // 仅左键
     justPanned = false
-    // 注意: 此处**不**立刻 setPointerCapture —— 一旦捕获, 后续 click 会被重定向到 wrap,
+    // 注意: 此处**不**立刻 setPointerCapture —— 一旦捕获, 后续 click 会被重定向到容器,
     // 节点 <g> 的 onclick 永不触发(纯点击失效)。改为等真正拖动(越过阈值)才捕获。
-    pan = { sx: e.clientX, sy: e.clientY, left: wrap.scrollLeft, top: wrap.scrollTop, moved: false, pid: e.pointerId }
+    const el = e.currentTarget
+    pan = { sx: e.clientX, sy: e.clientY, left: el.scrollLeft, top: el.scrollTop, moved: false, pid: e.pointerId, el }
   }
   function onPanMove(e) {
     if (!pan) return
     const dx = e.clientX - pan.sx, dy = e.clientY - pan.sy
     if (!pan.moved && (Math.abs(dx) > 3 || Math.abs(dy) > 3)) {
       pan.moved = true
-      wrap.setPointerCapture?.(pan.pid)              // 确认是拖动后才捕获, 保证拖出区域也能继续
+      pan.el.setPointerCapture?.(pan.pid)             // 确认是拖动后才捕获, 保证拖出区域也能继续
     }
     if (!pan.moved) return                            // 阈值内: 当作点击, 不滚动也不捕获
-    wrap.scrollLeft = pan.left - dx
-    wrap.scrollTop = pan.top - dy
+    pan.el.scrollLeft = pan.left - dx
+    pan.el.scrollTop = pan.top - dy
   }
-  function onPanUp(e) {
+  function onPanUp() {
     if (!pan) return
-    if (pan.moved) wrap.releasePointerCapture?.(pan.pid)
+    if (pan.moved) pan.el.releasePointerCapture?.(pan.pid)
     justPanned = pan.moved
     pan = null
   }
@@ -41,10 +197,11 @@
   function onNodeClick(ev, asn) {
     ev.stopPropagation()                       // 阻止冒泡到背景, 否则会被 onBgClick 立刻清掉
     if (justPanned) return                      // 刚拖完: 不当作点击
-    if (selected === asn) { showAsn(asn); return }
+    if (selected === asn) { showAsn(asn); full = false; return }   // 跳转前先关全屏, 否则盖住新结果
     selected = asn
   }
-  function onBgClick() { if (justPanned) return; selected = null }
+  // 点图内空白(非节点): 退出选中; stopPropagation 防止冒泡到全屏遮罩把模态也关掉。
+  function onBgClick(ev) { ev?.stopPropagation?.(); if (justPanned) return; selected = null }
 
   const NW = 120, NH = 34, COLG = 56, ROWG = 14, HEAD = 26
   // 距离轴标签(语言感知): 横轴 = 到 origin 的 AS 跳数; 第 0 列就是 origin。
@@ -217,10 +374,8 @@
       {#if b.name}<text x={b.x} y={b.y + 10} class="gnm">{b.name.slice(0, 15)}</text>{/if}
     </g>
   {/snippet}
-  <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div class="graphwrap" class:grabbing={!!pan} bind:this={wrap} onclick={onBgClick}
-       onpointerdown={onPanDown} onpointermove={onPanMove} onpointerup={onPanUp} onpointercancel={onPanUp}>
-    <svg viewBox="0 0 {g.W} {g.H}" width={g.W} height={g.H} class="pathsvg" class:hovering={!!hoverSet}>
+  {#snippet board(sc)}
+    <svg viewBox="0 0 {g.W} {g.H}" width={g.W * sc} height={g.H * sc} class="pathsvg" class:hovering={!!hoverSet}>
       <!-- 距离轴: 每列一条淡竖线 + 到 origin 的跳数标签 -->
       {#each g.axis as ax}
         <line class="gaxis" x1={ax.x} y1="18" x2={ax.x} y2={g.H} />
@@ -238,13 +393,97 @@
         {#each g.boxes as b}{@render node(b, false, false)}{/each}
       {/if}
     </svg>
+  {/snippet}
+
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <div class="graphbox">
+    <button class="gfsbtn" onclick={openFull} aria-label="全屏查看" title="全屏查看">
+      <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+        <path d="M2 6V2h4M14 6V2h-4M2 10v4h4M14 10v4h-4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+    </button>
+    <!-- svelte-ignore a11y_no_static_element_interactions a11y_click_events_have_key_events -->
+    <div class="graphwrap" class:grabbing={!!pan} onclick={onBgClick}
+         onpointerdown={onPanDown} onpointermove={onPanMove} onpointerup={onPanUp} onpointercancel={onPanUp}>
+      {@render board(1)}
+    </div>
   </div>
+
+  {#if full}
+    <!-- svelte-ignore a11y_no_static_element_interactions a11y_no_noninteractive_tabindex -->
+    <div class="gfull" role="dialog" aria-modal="true" tabindex="-1" use:portal>
+      <!-- 整个全屏遮罩都是 滚动/缩放/拖拽 区域(不再局限于图那块小卡片) -->
+      <!-- svelte-ignore a11y_no_static_element_interactions a11y_click_events_have_key_events -->
+      <div class="gscroll" bind:this={fwrap} class:grabbing={dragging} onclick={onBgClick}
+           onpointerdown={mDown} onpointermove={mMove} onpointerup={mUp} onpointercancel={mUp} onwheel={onWheel}>
+        <div class="gcenter">{@render board(zoom)}</div>
+      </div>
+      <div class="gctrls">
+        <button class="gbtn ic" onclick={() => zoomBtn(1 / 1.25)} aria-label="缩小" title="缩小"><Fa icon={iZoomOut} /></button>
+        <button class="gbtn pct" onclick={resetZoom} aria-label="重置为 1:1" title="重置为 1:1">{Math.round(zoom * 100)}%</button>
+        <button class="gbtn ic" onclick={() => zoomBtn(1.25)} aria-label="放大" title="放大"><Fa icon={iZoomIn} /></button>
+        <span class="gdiv"></span>
+        <button class="gbtn" class:ok={copyState === 'ok'} class:fail={copyState === 'fail'} onclick={copyPng}
+          aria-label="复制图片到剪贴板" title="复制图片到剪贴板(白底, 需 HTTPS 或 localhost)">
+          <Fa icon={copyState === 'ok' ? iCheck : copyState === 'fail' ? iClose : iCopy} />
+          <span>{copyState === 'ok' ? '已复制' : copyState === 'fail' ? '失败' : '复制'}</span>
+        </button>
+        <button class="gbtn" onclick={exportSvg} aria-label="下载 SVG 矢量图" title="下载 SVG · 矢量"><Fa icon={iDownload} /><span>SVG</span></button>
+        <button class="gbtn" onclick={() => exportPng(true)} aria-label="下载 PNG(白底)" title="下载 PNG · 白底"><Fa icon={iDownload} /><span>PNG</span></button>
+        <span class="gdiv"></span>
+        <button class="gbtn ic close" onclick={closeFull} aria-label="关闭" title="关闭 (Esc)"><Fa icon={iClose} /></button>
+      </div>
+    </div>
+  {/if}
 {/if}
 
+<svelte:window onkeydown={(e) => { if (full && e.key === 'Escape') closeFull() }} />
+
 <style>
+  /* 内嵌图容器: 相对定位, 右上角浮一个全屏按钮 */
+  .graphbox { position: relative; }
+  .gfsbtn { position: absolute; top: 8px; right: 8px; z-index: 3; display: inline-flex; align-items: center; justify-content: center;
+    width: 28px; height: 28px; padding: 0; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--muted); cursor: pointer; }
+  .gfsbtn:hover { color: var(--accent); border-color: var(--accent); }
   .graphwrap { overflow: auto; border: 1px solid var(--line); border-radius: 8px; background: var(--alt); padding: 6px; cursor: grab; }
   .graphwrap.grabbing { cursor: grabbing; user-select: none; }
-  .pathsvg { display: block; max-width: none; }
+  /* svg 出图按 width/height 属性的真实像素, flex 容器里也绝不收缩 ⇒ 始终 1:1 等比 */
+  .pathsvg { display: block; max-width: none; flex: 0 0 auto; }
+  /* ── 全屏模态 ── */
+  .gfull { position: fixed; inset: 0; z-index: 1000;
+    background: color-mix(in srgb, var(--bg) 82%, transparent); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); }
+  /* 滚动/缩放/拖拽区 = 整个全屏遮罩; 触摸全交给自定义逻辑(单指拖/双指缩), 不跟原生滚动打架 */
+  .gscroll { position: absolute; inset: 0; overflow: auto; touch-action: none; cursor: grab; }
+  .gscroll.grabbing { cursor: grabbing; user-select: none; }
+  /* gcenter 至少铺满视口并居中 svg; 放大到比视口大时用 safe 居中 ⇒ 可滚动/拖到任意边缘不裁切 */
+  .gcenter { min-width: 100%; min-height: 100%; display: flex; align-items: safe center; justify-content: safe center; box-sizing: border-box; padding: 24px; }
+  /* 控制条: 钉在遮罩右上角(滚动区之外, 不随内容滚动)。磨砂分段工具条, 缩放/导出/关闭三组。 */
+  .gctrls { position: absolute; top: 18px; right: 20px; z-index: 1001; display: flex; align-items: center; gap: 6px;
+    padding: 5px; border: 1px solid color-mix(in srgb, var(--line) 80%, transparent); border-radius: 13px;
+    background: color-mix(in srgb, var(--panel) 88%, transparent);
+    backdrop-filter: blur(10px) saturate(1.4); -webkit-backdrop-filter: blur(10px) saturate(1.4);
+    box-shadow: 0 10px 30px -12px rgba(0, 0, 0, .55), inset 0 1px 0 color-mix(in srgb, #fff 7%, transparent);
+    max-width: calc(100vw - 32px); flex-wrap: wrap; }
+  /* 分组靠细分隔线, 按钮本身无底色 */
+  .gdiv { width: 1px; height: 18px; background: color-mix(in srgb, var(--line) 90%, transparent); margin: 0 3px; }
+  .gbtn { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 9px; border: 0; border-radius: 7px;
+    background: none; color: var(--muted); font: 600 11.5px var(--mono); letter-spacing: .02em; line-height: 1;
+    cursor: pointer; transition: color .12s; }
+  .gbtn :global(svg) { width: 13px; height: 13px; flex: 0 0 auto; }
+  .gbtn.ic { width: 28px; padding: 0; justify-content: center; }
+  .gbtn.pct { min-width: 46px; justify-content: center; color: var(--fg); font-weight: 700; font-variant-numeric: tabular-nums; }
+  .gbtn:hover { color: var(--accent); }
+  .gbtn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .gbtn.ok { color: var(--signal); }
+  .gbtn.fail { color: #e5484d; }
+  .gbtn.close:hover { color: #e5484d; }
+  /* 手机: 收起文字标签, 纯图标; 倍率仍显示 */
+  @media (max-width: 640px) {
+    .gctrls { top: 10px; right: 10px; }
+    .gbtn span { display: none; }
+    .gbtn { padding: 0; width: 30px; justify-content: center; }
+    .gbtn.pct { width: auto; padding: 0 6px; }
+  }
   :global(.gedge) { stroke: var(--muted); opacity: .4; fill: none; }
   :global(.gmain) { stroke: var(--accent); opacity: .85; }
   /* prepend 折叠后那条跨多列的上游边: 虚线提示"中间被 prepend 撑长" */
