@@ -210,3 +210,30 @@ are generously **sponsored by [DMIT](https://www.dmit.io)**.
 - **Maintenance & deployment:** **[`AGENTS.md`](AGENTS.md)** is the authoritative
   runbook; the DuckDB + IPv6 design/contract is in **`docs/DUCKDB_V6_REFACTOR.md`**.
 - For BGP research and education only.
+
+## License
+
+Copyright © 2026 Archeb.
+
+The **source code** of this project is licensed under the **GNU Affero General
+Public License v3.0** (AGPL-3.0) — see **[`LICENSE`](LICENSE)**. In short: you are
+free to use, study, modify, and self-host it, but if you run a modified version as
+a network service, you must offer the corresponding source of your modifications to
+its users.
+
+**Contributions & dual licensing.** Contributions are accepted under the
+**[Contributor License Agreement](CLA.md)**, which lets the maintainer relicense
+the Project — including under a commercial/proprietary license and in closed-source
+client or derivative editions. The AGPL covers what is published here; the
+maintainer reserves the right to offer the Project under separate commercial terms.
+
+**Data is not covered by the code license.** The Parquet/JSON datasets distributed
+with the hosted site carry their own source terms:
+
+- **GeoLite2** — This product includes GeoLite2 data created by MaxMind, available
+  from [https://www.maxmind.com](https://www.maxmind.com), used under the
+  [GeoLite2 EULA](https://www.maxmind.com/en/geolite2/eula). The `ipdb`
+  China-cities database is private and **not redistributable**.
+- **Routing data** from [RIPE RIS](https://ris.ripe.net/) and
+  [RouteViews](https://www.routeviews.org/) is public and used under their
+  respective terms.
