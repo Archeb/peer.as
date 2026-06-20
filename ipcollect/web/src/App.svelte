@@ -28,6 +28,7 @@
   // 无详情时回落默认页标题。随详情状态 + 语言响应式变化(与 queries.js 的 go() pushState 同源, 故历史项标题对应正确)。
   function pageTitle() {
     const B = brand.main + brand.hi
+    if (S.notFound) return `404 · ${t('nf_title')} · ${B}`   // 404 独立页标题
     // 详情子页(prefix/asn/domain): 对象名 · 品牌。trace 浮窗里开 insight 也命中, 故先于各视图落地页判定。
     if (S.detailKind === 'prefix' && S.insight?.prefix) return `${S.insight.prefix} · ${B}`
     if (S.detailKind === 'asn' && S.asnView) {

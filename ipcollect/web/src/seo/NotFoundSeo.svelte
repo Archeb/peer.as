@@ -18,6 +18,6 @@
     <span class="ok">02  · · · · {x.edgeLabel}</span>
     <span class="ok">03  {host} · {x.reachedLabel}</span>
     <span>04  * * * · {x.noRespLabel}</span>
-    <span class="bad">✗ no route to host · {x.code}</span>
+    <span class="bad">✗ page not found · {x.code}</span>
   </div>
 </article>

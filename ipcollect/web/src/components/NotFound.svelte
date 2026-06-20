@@ -9,7 +9,6 @@
   import { t } from '../lib/i18n.js'
   import { goHome } from '../lib/queries.js'
   import { fetchTrace } from '../lib/geo.js'
-  import { brand } from '../lib/site.js'
   import { iCompass, iSpinner } from '../lib/icons.js'
 
   let { target = '' } = $props()
@@ -50,7 +49,6 @@
 </script>
 
 <div class="nf">
-  <button class="brand" onclick={goHome} aria-label={t('home')}>{brand.main}<span>{brand.hi}</span></button>
   <!-- 信号物: 一次真实但走到尽头的 traceroute。前三跳抵达本站, 第四跳(被请求的资源)无响应 -> 404。 -->
   <div class="card" role="img" aria-label={t('nf_title')}>
     <div class="bar">
@@ -65,18 +63,12 @@
         <li class="row ok" class:show={step > 2}><span class="h">03</span><span class="n">{host}</span><span class="r">{t('nf_reached')}</span></li>
         <li class="row dead" class:show={step > 3}><span class="h">04</span><span class="n">* * *</span><span class="r">{t('nf_noresp')}</span></li>
       </ol>
-      <div class="fail row" class:show={step >= 5}><span class="x">✗</span> no route to host <b class="code">404</b></div>
+      <div class="fail row" class:show={step >= 5}><span class="x">✗</span> page not found <b class="code">404</b></div>
       {#if !ready}
         <div class="tracing"><Fa icon={iSpinner} spin /> <span>traceroute…</span></div>
       {/if}
     </div>
   </div>
-
-  <h1>{t('nf_title')}</h1>
-  <p class="lede">{t('nf_desc')}</p>
-  {#if shown}
-    <p class="target"><span>{t('nf_target')}</span><code>{shown}</code></p>
-  {/if}
 
   <div class="actions">
     <button class="btn primary" onclick={goHome}><Fa icon={iCompass} /> {t('home')}</button>
@@ -93,12 +85,6 @@
     /* 这一页唯一的越界色: 失败跳的红(明暗两套, 仅本组件作用域)。 */
     --nf-bad: #cf5246; --nf-bad-bg: rgba(207, 82, 76, .07);
   }
-  .brand {
-    background: none; border: 0; cursor: pointer; padding: 4px; margin-bottom: 2px;
-    font: 800 18px/1 var(--mono); color: var(--fg); letter-spacing: .5px; -webkit-tap-highlight-color: transparent;
-  }
-  .brand span { color: var(--accent); }
-  .brand:focus-visible { outline: none; border-radius: 4px; box-shadow: 0 0 0 3px var(--accent-dim); }
   @media (prefers-color-scheme: dark) {
     :global(:root:not([data-theme])) .nf { --nf-bad: #f08a80; --nf-bad-bg: rgba(240, 138, 128, .10); }
   }
@@ -147,14 +133,6 @@
     .card { animation: none; }
   }
   @keyframes nf-fade { from { opacity: 0; } to { opacity: 1; } }
-
-  h1 { margin: 8px 0 0; font: 600 19px/1.3 var(--sans); color: var(--fg); }
-  .lede { margin: 0; max-width: 388px; color: var(--muted); font: 13px/1.65 var(--sans); }
-  .target { display: inline-flex; align-items: center; gap: 8px; margin: 2px 0 0; font-size: 12px; color: var(--muted); }
-  .target code {
-    font-family: var(--mono); color: var(--fg); background: var(--alt); border: 1px solid var(--line);
-    border-radius: 5px; padding: 2px 8px; max-width: min(78vw, 320px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  }
 
   .actions { display: flex; gap: 10px; margin-top: 8px; flex-wrap: wrap; justify-content: center; }
   .btn {
