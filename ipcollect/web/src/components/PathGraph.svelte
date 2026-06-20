@@ -451,7 +451,7 @@
   .pathsvg { display: block; max-width: none; flex: 0 0 auto; }
   /* ── 全屏模态 ── */
   .gfull { position: fixed; inset: 0; z-index: 1000;
-    background: color-mix(in srgb, var(--bg) 82%, transparent); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); }
+    background: color-mix(in srgb, var(--bg) 82%, transparent); backdrop-filter: blur(10px); }
   /* 滚动/缩放/拖拽区 = 整个全屏遮罩; 触摸全交给自定义逻辑(单指拖/双指缩), 不跟原生滚动打架 */
   .gscroll { position: absolute; inset: 0; overflow: auto; touch-action: none; cursor: grab; }
   .gscroll.grabbing { cursor: grabbing; user-select: none; }
@@ -461,7 +461,7 @@
   .gctrls { position: absolute; top: 18px; right: 20px; z-index: 1001; display: flex; align-items: center; gap: 6px;
     padding: 5px; border: 1px solid color-mix(in srgb, var(--line) 80%, transparent); border-radius: 13px;
     background: color-mix(in srgb, var(--panel) 88%, transparent);
-    backdrop-filter: blur(10px) saturate(1.4); -webkit-backdrop-filter: blur(10px) saturate(1.4);
+    backdrop-filter: blur(10px) saturate(1.4);
     box-shadow: 0 10px 30px -12px rgba(0, 0, 0, .55), inset 0 1px 0 color-mix(in srgb, #fff 7%, transparent);
     max-width: calc(100vw - 32px); flex-wrap: wrap; }
   /* 分组靠细分隔线, 按钮本身无底色 */

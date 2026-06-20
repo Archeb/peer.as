@@ -21,5 +21,6 @@ export default defineConfig({
     __BUILD_SHA__: JSON.stringify(BUILD_SHA),
     __BUILD_TS__: JSON.stringify(BUILD_TS),
   },
-  build: { target: 'es2022', chunkSizeWarningLimit: 2000, assetsInlineLimit: 2048 },
+  // cssTarget 设到 backdrop-filter 已原生(无前缀)支持的版本 ⇒ esbuild 不再自动塞 -webkit-backdrop-filter。
+  build: { target: 'es2022', cssTarget: ['chrome111', 'edge111', 'firefox128', 'safari18'], chunkSizeWarningLimit: 2000, assetsInlineLimit: 2048 },
 })
