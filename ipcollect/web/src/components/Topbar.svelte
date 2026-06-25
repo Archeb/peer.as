@@ -4,7 +4,7 @@
   import { t } from '../lib/i18n.js'
   import { ccLabel, classifyQuery } from '../lib/bgp.js'
   import { resolveCC, searchNow, openWhoisFromBox, gotoPage, canExport } from '../lib/queries.js'
-  import { iCountry, iCity, iPath, iSubnet, iSearch, iClear, iHelp, iWhois, iUser, iArrowL, iArrowR, iDownload } from '../lib/icons.js'
+  import { iCountry, iCity, iPath, iSubnet, iSearch, iClear, iHelp, iWhois, iUser, iArrowL, iArrowR, iDownload, iSpinner } from '../lib/icons.js'
   import { features } from '../lib/site.js'
   import Field from './Field.svelte'
 
@@ -34,6 +34,10 @@
 </script>
 
 <header class="topbar">
+  <!-- 顶部进度条: 仅确定性进度(全表 AS_PATH 搜索 + 首次引擎加载, S.prog>0)时显示; 普通查询只在状态行转圈 -->
+  {#if S.prog > 0}
+    <div class="topprog" aria-hidden="true"><div class="topprog-fill" style="width:{Math.round(S.prog * 100)}%"></div></div>
+  {/if}
   <div class="filters">
     <!-- 第一行: family 单选 + 精确查询 IP / CIDR / ASN — 命中即抢占, 其余筛选禁用 -->
     <div class="row primary">
@@ -82,6 +86,7 @@
     </div>
   </div>
   <div class="statusline">
+    {#if S.busy}<span class="spin"><Fa icon={iSpinner} spin /></span>{/if}
     <span class="msg">{S.msg}</span>
     {#if tableMode}
       <div class="resbar">
@@ -195,8 +200,27 @@
     background: var(--inbg); color: var(--fg); border: 1px solid var(--line); box-shadow: none;
   }
   .whoisbtn:hover:not(:disabled) { filter: none; border-color: var(--accent); color: var(--accent); }
-  .statusline { margin-top: 9px; min-height: 16px; font-size: 12px; color: var(--muted); display: flex; align-items: center; gap: 12px; }
+  .statusline { margin-top: 9px; min-height: 16px; font-size: 12px; color: var(--muted); display: flex; align-items: center; gap: 8px; }
   .statusline .msg { min-width: 0; flex: 1; }
+  /* 状态行加载图标: 任意查询 / 引擎加载进行中(S.busy)时转动。 */
+  .statusline .spin { flex: 0 0 auto; display: inline-flex; align-items: center; color: var(--accent); font-size: 11px; }
+  /* 顶部进度条: 贴 topbar 顶缘的细线, 宽度跟 S.prog; 移动光泽提示"仍在跑"。仅确定性进度时渲染。 */
+  .topprog {
+    position: absolute; left: 0; right: 0; top: 0; height: 2.5px;
+    background: var(--inbg); overflow: hidden; z-index: 7;
+  }
+  .topprog-fill {
+    position: relative; height: 100%;
+    background: linear-gradient(90deg, var(--accent-dim), var(--accent));
+    box-shadow: 0 0 8px var(--accent-dim);
+    transition: width .25s cubic-bezier(.4, 0, .2, 1);
+  }
+  .topprog-fill::after {
+    content: ''; position: absolute; inset: 0;
+    background: linear-gradient(90deg, transparent, color-mix(in srgb, #fff 55%, transparent), transparent);
+    animation: qsheen 1.1s linear infinite;
+  }
+  @keyframes qsheen { from { transform: translateX(-100%); } to { transform: translateX(100%); } }
   /* 分页 + 导出: 同行最右 */
   .resbar { flex: 0 0 auto; display: flex; align-items: center; gap: 8px; }
   .pager { display: inline-flex; align-items: center; gap: 2px; }

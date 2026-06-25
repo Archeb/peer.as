@@ -11,6 +11,10 @@ export const S = $state({
   fatal: '',               // 致命错误文案(meta.json / DuckDB 引擎加载失败); 仅路由分析视图显示, 不阻断 WHOIS 视图
   notFound: null,          // { target } —— 路径无法解析为任何已知路由/对象时置(404); App 渲染 NotFound, applyRoute/goHome 清空
   msg: '',
+  // 慢查询(全表 AS_PATH 扫描)进度条: DuckDB-WASM 单次 query 无分片进度回调 -> 用 NProgress 式涓流条:
+  // 运行中缓增逼近 0.9(永不到顶), 查询返回时补满 1 再淡出。仅 Topbar statusline 渲染。
+  busy: false,             // 慢查询进行中(进度条可见)
+  prog: 0,                 // 进度 0..1
   rows: [],                // 当前结果行
   // 顶层视图: 'routing'(BGP 路由分析: 主查询页 + 详情面板) | 'whois'(WHOIS·RDAP 独立查询视图)
   // | 'trace'(全球路由跟踪: globalping MTR + 自有 IP 库, 3D 地球可视化)。

@@ -1,6 +1,8 @@
 // DuckDB-WASM 数据层 (从 web_ref/app.js 移植)。无后端: 浏览器对静态 parquet 发 HTTP Range 查询。
 import { S } from './store.svelte.js'
 import { features } from './site.js'
+import { t } from './i18n.js'
+import { progressBegin, progressSet, progressFinish, progressAbort } from './progress.js'
 // DuckDB-WASM 资产经 Vite `?url` 打包: 输出带内容 hash 的独立资源(不内联到 JS), 随 dist 部署。
 // **wasm 自托管的边界**: CN 镜像(Caddy, 无大小限制)同源托管完整 wasm;**CF Pages 单文件 ≤25MiB,
 // 而 duckdb-eh/mvp.wasm 达 33/39MB 放不下** -> CF 部署临时移出这俩 wasm(见 daily-refresh 3b),
@@ -11,6 +13,9 @@ import wasmEh from '@duckdb/duckdb-wasm/dist/duckdb-eh.wasm?url'
 import workerEh from '@duckdb/duckdb-wasm/dist/duckdb-browser-eh.worker.js?url'
 
 const DUCKDB_VER = '1.32.0'
+// wasm 解压后字节数(进度条分母): 流式读到的是**解压后**字节, content-length 多为压缩值不可用 ->
+// 用此已知常数算下载百分比。与 DUCKDB_VER 绑定; 升级版本时同步更新(偏差也无妨, 收尾会补满 100%)。
+const WASM_BYTES = { eh: 34242586, mvp: 39362651 }
 // CF Pages 路径下 wasm 的外部回退源(同源放不下时按序尝试)。两个全球 CDN 互为备份、均带 CORS。
 // 文件用 duckdb 官方原名(非 hash); 仅 CF 海外/直连节点会用到, 国内主路径走 CN VPS 同源、不碰这里。
 const CDN_DIST = [
@@ -145,11 +150,31 @@ function validBytes(buf, isWasm) {
   return u[0] !== 0x3c
 }
 
+// 流式读 Response, 边读边上报进度(frac=已读/expectBytes)。返回拼好的 ArrayBuffer。
+// expectBytes 用解压后大小: content-length 在 gzip 下是压缩值会算超 100%, 故优先用已知常数(无则退 content-length)。
+async function readWithProgress(r, onProgress, expectBytes) {
+  const total = expectBytes || Number(r.headers.get('content-length')) || 0
+  const reader = r.body.getReader()
+  const chunks = []; let received = 0
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) break
+    chunks.push(value); received += value.length
+    if (total) onProgress(received / total)
+  }
+  let len = 0; for (const c of chunks) len += c.length
+  const out = new Uint8Array(len); let off = 0
+  for (const c of chunks) { out.set(c, off); off += c.length }
+  return out.buffer
+}
+
 // 把大体积 wasm/worker 存进 Cache Storage, 以 blob: URL 交给 duckdb。
 // 为何不靠浏览器 HTTP 缓存: eh.wasm 解压后 34MB, 超出磁盘缓存单资源上限 -> 易缓存失败/截断、每刷新重下;
 // 故 fetch 一律 `no-store`(不读不写 HTTP 缓存), 改由 Cache Storage(无单资源上限)持久化。
 // urls 按序尝试(CN 镜像/同源/CDN), 每个候选都做字节级校验, 首个合法即止并存入。键与宿主无关(稳定)。
-async function cachedBlobURL(key, urls, type, isWasm) {
+// onProgress(frac 0..1) + expectBytes: 仅大 wasm 传, 用流式读上报真实下载进度(分母为解压后已知大小)。
+// 缓存命中则瞬时返回(不调 onProgress); 其它候选(worker)走普通 arrayBuffer。
+async function cachedBlobURL(key, urls, type, isWasm, onProgress, expectBytes) {
   const req = `${location.origin}/__duckdbwasm__/${key}`
   let cache, buf
   try {
@@ -167,7 +192,7 @@ async function cachedBlobURL(key, urls, type, isWasm) {
       try {
         const r = await fetch(u, { cache: 'no-store' })
         if (!r.ok) { err = new Error(`${u} → ${r.status}`); continue }
-        const b = await r.arrayBuffer()
+        const b = onProgress && r.body ? await readWithProgress(r, onProgress, expectBytes) : await r.arrayBuffer()
         if (!validBytes(b, isWasm)) { err = new Error(`${u} → 非法内容(${b.byteLength}B)`); continue }
         buf = b
         try { if (cache) await cache.put(req, new Response(b, { headers: { 'content-type': type } })) }
@@ -181,6 +206,8 @@ async function cachedBlobURL(key, urls, type, isWasm) {
 }
 
 export async function initDuck() {
+  // 首次引擎加载进度条(各阶段步进; wasm 下载段为真实字节进度)。失败由 ensureEngine 的 catch 收起(progressAbort)。
+  progressBegin(); S.msg = t('loading')
   // JS API: 动态 import 打包出的同源 chunk(惰性加载, 不进首屏; 不再碰 jsDelivr)。
   const duckdb = await import('@duckdb/duckdb-wasm')
   // 候选 bundle 指向打包资产(?url); selectBundle 按浏览器特性挑 mvp/eh。
@@ -189,17 +216,23 @@ export async function initDuck() {
     eh:  { mainModule: wasmEh,  mainWorker: workerEh },
   })
   const variant = picked.mainModule === wasmEh ? 'eh' : 'mvp'
+  progressSet(0.06)
   // worker.js + 大 wasm 都过 Cache Storage(跨刷新命中); wasmSrcs 给候选: CN 镜像优先 / 同源 / CDN 兜底。
   // cdnName 用 duckdb 官方原名(CDN 上即此名): worker=duckdb-browser-<v>.worker.js, wasm=duckdb-<v>.wasm。
   const workerUrl = await cachedBlobURL(`${variant}.worker.js`,
     wasmSrcs(picked.mainWorker, `duckdb-browser-${variant}.worker.js`, false), 'text/javascript', false)
+  progressSet(0.10)
+  // wasm 是首载主成本(~34/39MB): 流式上报真实下载进度, 占进度条 0.10→0.78 段(缓存命中则瞬时跳过)。
   const wasmUrl = await cachedBlobURL(`${variant}.wasm`,
-    wasmSrcs(picked.mainModule, `duckdb-${variant}.wasm`, true), 'application/wasm', true)
+    wasmSrcs(picked.mainModule, `duckdb-${variant}.wasm`, true), 'application/wasm', true,
+    frac => progressSet(0.10 + frac * 0.68), WASM_BYTES[variant])
 
   const worker = new Worker(workerUrl)
   const logger = new duckdb.ConsoleLogger(duckdb.LogLevel.WARNING)
   db = new duckdb.AsyncDuckDB(logger, worker)
+  progressSet(0.80)
   await db.instantiate(wasmUrl, picked.pthreadWorker)
+  progressSet(0.88)
   // 全 GET 模式: 关掉 duckdb-wasm 读 parquet 前的 HEAD(取大小/Range 支持)与 Range 探测,
   // 每个分片只发一条普通 GET(200, 无 Range 头) —— 直接整片下。我们的分片是手工小分片 + 文件级
   // 区间裁剪(prefixes_ip/pathsearch_origin 等), 本就不依赖 duckdb 的 Range 部分读; 整片 GET 让
@@ -212,6 +245,7 @@ export async function initDuck() {
   URL.revokeObjectURL(workerUrl)
   URL.revokeObjectURL(wasmUrl)   // instantiate 已读完 wasm, 释放 blob
   conn = await db.connect()
+  progressSet(0.90); S.msg = t('loading_ext')   // parquet 扩展加载阶段
   // **顺序关键(踩过坑)**: 必须先 setupExtensions 再 tuneSession。tuneSession 里的
   // `SET parquet_metadata_cache=true` 是 **parquet 扩展注册的设置**, DuckDB 为满足该 SET 会
   // autoload parquet(PhysicalSet -> AutoloadExtensionByConfigName)。若此时仓库还没指到自托管,
@@ -219,6 +253,7 @@ export async function initDuck() {
   // 不再触发任何 autoload; 即便 eager 预热失败, 仓库也已指向自托管, autoload 不跨境。
   await setupExtensions(variant)
   await tuneSession()
+  progressFinish()   // 补满淡出(asnames/org 由 ensureEngine 并行小补, 不计入)
 }
 
 // meta.json 单次加载(它带 version, 决定其它文件的 ?v=, 以及 files 文件清单)。**App 启动与任何按需查询
@@ -250,7 +285,7 @@ export function ensureEngine() {
     const asnP = getData(`/asnames.json${dv()}`).then(n => { S.asnNames = n }).catch(() => {})
     const orgP = getData(`/asnorg.json${dv()}`).then(o => { S.asnOrg = o }).catch(() => {})
     try { await initDuck() }
-    catch (e) { S.fatal = `DuckDB-WASM: ${e.message}`; S.loading = false; _enginePromise = null; throw e }
+    catch (e) { progressAbort(); S.fatal = `DuckDB-WASM: ${e.message}`; S.loading = false; _enginePromise = null; throw e }
     try { await asnP } catch (e) { /* 可选, 忽略 */ }
     try { await orgP } catch (e) { /* 可选, 忽略 */ }
     S.ready = true; S.loading = false; S.msg = ''

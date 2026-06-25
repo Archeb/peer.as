@@ -7,6 +7,7 @@ import { q, rpList, pathsFileFor, pathsearchFilesForOrigin, pathsearchFilesForOr
   assetSetFiles, assetSetFilesForKey, assetMemberFilesForKey, assetMemberOfFilesForKey, asnNeighFilesForAsn, ensureEngine } from './db.js'
 import { resolveDns } from './dns.js'
 import { features } from './site.js'
+import { progressBegin, progressSet, progressFinish } from './progress.js'
 import {
   int2ip, parseSeq, sqlStr, ccLabel, regionName, lowCut, lowCutFor, isLowVis, asnName, classifyQuery,
   asnsMatchingName, compilePathQuery, ip2range, ip6Range, parseBest, placeLabel, classifyRelation, isTier1,
@@ -34,6 +35,34 @@ function ccMap() {
 export function resolveCC(v) {
   v = (v || '').trim(); if (!v) return null
   return ccMap()[v.toLowerCase()] || (/^[A-Za-z]{2}$/.test(v) ? v.toUpperCase() : null)
+}
+
+// 慢查询进度条(仅全表 AS_PATH 搜索用)。DuckDB-WASM 的单次 query 无分片级进度回调, 但成本主要由
+// **本次扫描的字节数**决定(下载 + LIKE 扫描)。pathsearch 分片体积均匀(实测 v4 均 ~9.2MB / v6 ~7.5MB /
+// 合 ~8.9MB, 构建有上限 cap ~12MB), 故可用「分片数 × 平均片大小」估出本次字节, 再除以学习到的吞吐(MB/s)
+// 得 ETA, 把进度推进到 0.9, 查询返回时补满 1。
+// _mbPerSec 由每次真实 elapsed 反推并 EWMA 校准 —— 首查用粗估, 之后越来越准(二次命中缓存吞吐更高, 自适应)。
+// 注: SHARD_MB 这个常数在估计与校准里同时出现会约掉, 只影响首次冷查的绝对估计与显示的 MB 数;
+//     构建改了分片尺寸也不影响后续估值准度。超出预估仍未返回时进度自然卡 0.9 涓流(NProgress 回退)。
+const SHARD_MB = 9                                        // 实测平均分片大小(MB); cap ~12MB
+let _mbPerSec = 10                                        // 学习到的有效吞吐(下载+扫描), 会被实测校准
+let _progTimer = null, _progT0 = 0, _progMB = SHARD_MB
+function progressStart(shards) {
+  clearInterval(_progTimer)
+  _progMB = Math.max(1, shards || 1) * SHARD_MB
+  _progT0 = performance.now()
+  const eta = _progMB / _mbPerSec * 1000                  // 预估时长(ms)
+  progressBegin()
+  _progTimer = setInterval(() => {
+    progressSet((performance.now() - _progT0) / eta * 0.9)   // 推进到 0.9, 单调
+  }, 100)
+}
+function progressDone() {
+  clearInterval(_progTimer); _progTimer = null
+  if (!S.busy) return
+  const mbps = _progMB / ((performance.now() - _progT0) / 1000)
+  if (mbps > 0.5 && mbps < 500) _mbPerSec = _mbPerSec * 0.7 + mbps * 0.3   // EWMA 校准(滤掉异常值)
+  progressFinish()
 }
 
 let _timer = null
@@ -96,7 +125,7 @@ export async function runSearch(keepPage = false) {
   // RPKI/IRR 状态列(门控: 旧数据无此列不 SELECT)。结尾留逗号以拼进列表。
   const statSel = (S.meta?.has_rpki ? ' rpki,' : '') + (S.meta?.has_irr ? ' irr,' : '')
   const w = []
-  let fromExpr, cols, isGlobal = false
+  let fromExpr, cols, isGlobal = false, shardCount = 0   // shardCount: 全表 AS_PATH 扫描的分片数(进度条预估用)
   if (cc) {
     // 国家视图: v4 + v6 geo working-set 一起读(schema 一致, segs 均为 CIDR 串列表), 显示层合并。
     // 受 family 单选(f.fam: all/4/6)约束: byFam 只留对应 family 的分片。
@@ -122,6 +151,7 @@ export async function runSearch(keepPage = false) {
     }
     fromExpr = rpList(psFiles)
     cols = `pid, prefix, cc, origin_asn,${statSel}${moasCol} n_paths, best_path`
+    shardCount = psFiles.length
   }
   if (hasPath) for (const c of pq.sqlConds('paths_blob')) w.push(c)
   if (originAsns) w.push(originAsns.length === 1 ? `origin_asn = ${originAsns[0]}` : `origin_asn IN (${originAsns.join(',')})`)
@@ -137,9 +167,13 @@ export async function runSearch(keepPage = false) {
   const sql = `SELECT ${cols} FROM ${fromExpr} ${where ? 'WHERE ' + where : ''} ORDER BY ${order} LIMIT ${limit + 1}${off ? ` OFFSET ${off}` : ''}`
   _tableQuery = { src: fromExpr, where, cols, order, cc: cc || '' }   // 供导出复用
 
-  S.msg = (isGlobal && hasPath) ? t('searching_global') : t('querying')
+  const slow = isGlobal && hasPath          // 全表 AS_PATH 扫描: 唯一需要顶部进度条的慢操作
+  S.msg = slow ? `${t('searching_global')} · ~${Math.round(shardCount * SHARD_MB)} MB` : t('querying')
+  if (slow) progressStart(shardCount); else S.busy = true   // 普通查询: 状态行只转圈, 不显示进度条
   let rows
-  try { rows = await q(sql) } catch (e) { S.rows = []; S.msg = `${t('query_failed')}: ${e.message}`; return }
+  try { rows = await q(sql) }
+  catch (e) { if (slow) progressDone(); else S.busy = false; S.rows = []; S.msg = `${t('query_failed')}: ${e.message}`; return }
+  if (slow) progressDone(); else S.busy = false
   const more = rows.length > limit; if (more) rows = rows.slice(0, limit)
   S.more = more
   rows.forEach(r => { r._best = !!(pq.hasInclude && pq.testStr(r.best_path)) })
@@ -189,6 +223,7 @@ async function runSubnet(r, f) {
   if (!f.incllow) w.push(`n_paths >= ${Math.ceil(lowCutFor(v6))}`)
   const limit = Math.max(1, parseInt(f.limit || '500', 10))
   let rows
+  S.busy = true   // 子网查询: 状态行转圈
   try {
     const statSel = (S.meta?.has_rpki ? 'rpki, ' : '') + (S.meta?.has_irr ? 'irr, ' : '')
     const subCols = `pid, prefix, plen, cc, city, origin_asn, ${statSel}n_origins, n_paths`
@@ -196,7 +231,8 @@ async function runSubnet(r, f) {
     const off = (S.page || 0) * limit
     rows = await q(`SELECT ${subCols} FROM ${src} WHERE ${subWhere} ORDER BY ${subOrder} LIMIT ${limit + 1}${off ? ` OFFSET ${off}` : ''}`)
     _tableQuery = { src, where: subWhere, cols: subCols, order: subOrder, cc: cc || '' }   // 供导出复用
-  } catch (e) { S.rows = []; S.msg = `${t('query_failed')}: ${e.message}`; return }
+  } catch (e) { S.busy = false; S.rows = []; S.msg = `${t('query_failed')}: ${e.message}`; return }
+  S.busy = false
   const more = rows.length > limit; if (more) rows = rows.slice(0, limit)
   S.rows = rows; S.mode = 'subnet'; S.more = more
   const extra = [cc && ccLabel(cc), city, !f.incllow && (S.lang === 'zh' ? '隐藏低可见' : 'low-vis hidden')].filter(Boolean).join(' · ')
