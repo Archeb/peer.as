@@ -114,7 +114,7 @@
   </div>
   <MobileBar />
   <div class="scroll">
-    <div class="col" class:wide={S.probeExpanded}>
+    <div class="col" class:wide={S.probeExpanded} class:lifted={!S.probePinned && !S.probeExpanded && !S.whois.kind}>
       <!-- PEER.AS 字标: 查询框正上方, 与查询框作为一组纵向居中; 出结果时折叠淡出 -->
       <div class="wordmark" class:in={bgShown} class:gone={S.whois.kind || S.probeExpanded} class:booting aria-hidden="true">
         <!-- 彩蛋: 连点大字标 10 次解锁 Blue Archive 主题 -->
@@ -154,8 +154,9 @@
         <button type="submit" class="run"><Fa icon={iSearch} /> <span>{t('wv_go')}</span></button>
       </form>
 
-      <!-- 「你的接入」自助探测卡片: 仅首页(出结果时随 hero 一并收起) -->
-      <div class="spwrap" class:gone={S.whois.kind} class:expanded={S.probeExpanded} class:booting>
+      <!-- 「你的接入」自助探测卡片: 仅首页(出结果时随 hero 一并收起)。
+           取消图钉(probePinned=false)时首页默认收起, 字标+查询框仍由 .scroll 居中; 经侧栏「IP 探测」摊开(probeExpanded)时照常显示。 -->
+      <div class="spwrap" class:gone={S.whois.kind || (!S.probePinned && !S.probeExpanded)} class:expanded={S.probeExpanded} class:booting>
         <SelfProbe onpick={(qq) => pick(qq)} />
       </div>
 
@@ -204,7 +205,10 @@
     position: relative; z-index: 1; flex: 1; overflow: auto; padding: 28px 22px 0px;
     display: flex; flex-direction: column; align-items: center; justify-content: safe center;
   }
-  .col { max-width: 820px; margin: 0 auto; width: 100%; }
+  .col { max-width: 820px; margin: 0 auto; width: 100%; transition: margin .4s ease; }
+  /* 取消图钉(探测卡片收起)时底部留 15vh: flex safe-center 把这段空白计入 → 整组(字标+查询框)相对视口上移,
+     不至于太靠下。图钉钉住(卡片显示)时不留, 否则整体偏高。 */
+  .col.lifted { margin-bottom: 15vh; }
   /* 「你的接入」摊牌时, 列放开到整个 scroll 横向空间(让发牌网格能横铺), 但搜索框/示例仍居中收窄 */
   .col.wide { max-width: none; }
   /* 「你的接入」摊牌时列放宽, 但搜索框仍居中收窄在 820(地球已移到列外的侧景层, 不受列宽影响) */

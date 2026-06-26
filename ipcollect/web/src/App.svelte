@@ -81,6 +81,7 @@
     setTimeout(dropSeo, 12000)   // 兜底: 引擎卡住/异常时, 覆盖层最多 12s 后也移除, 绝不长期遮挡 app
 
     S.advWhois = localStorage.getItem('ipc-adv-whois') === '1'   // 「高级搜索」记忆态
+    S.probePinned = localStorage.getItem('ipc-probe-pinned') !== '0'   // 首页探测卡片默认显示(记忆态, 默认开)
     const qp = new URLSearchParams(location.search)
     setLang(qp.get('lang') || localStorage.getItem('ipc-lang')
       || ((navigator.language || 'zh').toLowerCase().startsWith('zh') ? 'zh' : 'en'))

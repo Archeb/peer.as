@@ -77,6 +77,7 @@ export const STRINGS = {
     whois_open: '查看该 ASN 的 WHOIS 详情', whois_title: 'WHOIS / 注册信息（RDAP）', whois_src: '来源', whois_more: '展开', whois_none: '无注册信息',
     // ── 视图导航 + WHOIS·RDAP 独立视图 ──
     home: '回到首页', nav_views: '视图', nav_routing: '路由分析', nav_whois: '首页', nav_probe: 'IP 探测', nav_networks: '网络目录',
+    probe_pin: '在首页显示探测结果', probe_unpin: '不在首页显示探测结果',
     wv_adv: '专业版', wv_adv_hint: '勾选后直接进入路由分析（AS_PATH / 地区 / 子网 等高级查询），不再显示简洁 WHOIS',
     wv_ph: '输入 ASN / IP / 前缀 / 域名…',
     wv_go: '查询', wv_examples: '试试',
@@ -208,6 +209,7 @@ export const STRINGS = {
     whois_open: 'Open WHOIS detail for this ASN', whois_title: 'WHOIS / registration (RDAP)', whois_src: 'source', whois_more: 'expand', whois_none: 'no registration data',
     // ── view nav + WHOIS·RDAP standalone view ──
     home: 'Home', nav_views: 'Views', nav_routing: 'Routing', nav_whois: 'Home', nav_probe: 'IP Probe', nav_networks: 'Networks',
+    probe_pin: 'Show probe on home', probe_unpin: 'Hide probe from home',
     wv_adv: 'Pro', wv_adv_hint: 'Send every query straight to routing analysis (AS_PATH / region / subnet …) instead of the simple WHOIS view',
     wv_ph: 'Enter an ASN / IP / prefix / domain…',
     wv_go: 'Lookup', wv_examples: 'Try',

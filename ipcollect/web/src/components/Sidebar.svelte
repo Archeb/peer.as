@@ -4,12 +4,18 @@
   import { t } from '../lib/i18n.js'
   import { cycleTheme, toggleLang } from '../lib/ui.js'
   import { setView, goHome, openProbe, openTrace } from '../lib/queries.js'
-  import { iTheme, iLang, iAbout, iRepo, iIssue, iChangelog, iNodes, iWhois, iProbe, iClose, iSatellite, iLink, iChevD, iChevR, iGlobal } from '../lib/icons.js'
+  import { iTheme, iLang, iAbout, iRepo, iIssue, iChangelog, iNodes, iWhois, iProbe, iClose, iSatellite, iLink, iChevD, iChevR, iGlobal, iPin, iUnpin } from '../lib/icons.js'
   import { brand, features } from '../lib/site.js'
   import logoBa from '../assets/peeras-ba.png'
 
   let themeLabel = $derived({ auto: 'AUTO', light: 'LIGHT', dark: 'DARK', ba: 'BA' }[S.theme] || 'AUTO')
   let friendsOpen = $state(false)   // 友情链接默认折叠, 点标题展开
+
+  // 图钉: 切换首页是否默认显示「你的接入」探测卡片(localStorage 记忆)。不影响经此入口进入完整探测视图。
+  function togglePin() {
+    S.probePinned = !S.probePinned
+    try { localStorage.setItem('ipc-probe-pinned', S.probePinned ? '1' : '0') } catch (e) { /* 隐私模式忽略 */ }
+  }
 </script>
 
 {#if S.side}<div class="scrim" onclick={() => (S.side = false)} role="presentation"></div>{/if}
@@ -19,7 +25,7 @@
       {#if S.theme === 'ba'}
         <img class="logo-img" src={logoBa} alt="{brand.main}{brand.hi}" />
       {:else}
-        <span class="dot"></span>{brand.main}<span class="hi">{brand.hi}</span>
+        {brand.main}<span class="hi">{brand.hi}</span>
       {/if}
     </button>
     <button class="sideclose" onclick={() => (S.side = false)} title={t('menu')} aria-label={t('menu')}>
@@ -33,10 +39,18 @@
         onclick={() => { S.side = false; setView('whois') }}>
         <Fa icon={iWhois} /> <span>{t('nav_whois')}</span>
       </button>
-      <button class="vitem" class:on={S.view === 'whois' && S.probeExpanded} aria-current={S.view === 'whois' && S.probeExpanded}
-        onclick={() => { S.side = false; openProbe() }}>
-        <Fa icon={iProbe} /> <span>{t('nav_probe')}</span>
-      </button>
+      <div class="vrow">
+        <button class="vitem" class:on={S.view === 'whois' && S.probeExpanded} aria-current={S.view === 'whois' && S.probeExpanded}
+          onclick={() => { S.side = false; openProbe() }}>
+          <Fa icon={iProbe} /> <span>{t('nav_probe')}</span>
+        </button>
+        <!-- 图钉钮: 仅图标, 切换首页是否默认显示探测卡片(钉=显示 / 取消=隐藏) -->
+        <button class="pin" class:on={S.probePinned} onclick={togglePin}
+          aria-pressed={S.probePinned} title={S.probePinned ? t('probe_unpin') : t('probe_pin')}
+          aria-label={S.probePinned ? t('probe_unpin') : t('probe_pin')}>
+          <Fa icon={S.probePinned ? iPin : iUnpin} />
+        </button>
+      </div>
       {#if features.routeTrace}
         <button class="vitem" class:on={S.view === 'trace'} aria-current={S.view === 'trace'}
           onclick={() => { S.side = false; openTrace() }}>
@@ -133,13 +147,19 @@
   .brand .logo.img { padding: 0; }
   .brand .logo .logo-img { display: block; height: 32px; width: auto; max-width: 168px; object-fit: contain; }
   .brand .logo .hi { color: var(--accent); }
-  .brand .logo .dot {
-    width: 8px; height: 8px; border-radius: 50%; background: var(--accent);
-    margin-right: 9px; box-shadow: 0 0 10px var(--accent); animation: pulse 2.4s ease-in-out infinite;
-  }
-  @keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: .35 } }
   /* 顶层视图导航(路由分析 / WHOIS)。左侧 accent 竖条标记当前视图。 */
   .vnav { display: flex; flex-direction: column; gap: 3px; margin-top: -6px; }
+  /* IP 探测项 + 图钉钮: vitem 仍占满整行(宽度与其它项一致), 图钉钮绝对叠在右侧, 不挤压 vitem。 */
+  .vrow { position: relative; }
+  .pin {
+    position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 26px; height: 26px; border-radius: 7px; cursor: pointer;
+    background: transparent; border: 0; color: var(--muted); transition: color .14s, background .14s;
+  }
+  .pin :global(svg) { width: 11px; }
+  .pin:hover { color: var(--fg); background: var(--alt); }
+  .pin.on { color: var(--accent); }
   .vitem {
     display: flex; align-items: center; gap: 9px; width: 100%; text-align: left;
     background: transparent; border: 1px solid transparent; border-radius: 8px;

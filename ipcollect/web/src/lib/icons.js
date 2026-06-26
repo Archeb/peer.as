@@ -30,6 +30,8 @@ export {
   faBolt as iBolt,
   faNetworkWired as iNet,
   faTowerBroadcast as iProbe,
+  faThumbtack as iPin,
+  faThumbtackSlash as iUnpin,
   faSatelliteDish as iSatellite,
   faBullseye as iTarget,
   faPlay as iPlay,
