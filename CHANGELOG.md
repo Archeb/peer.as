@@ -6,6 +6,19 @@ PEER.AS 的功能更新记录。仅记录**面向用户的功能性变更**（�
 Feature-level changelog for PEER.AS. Only **user-facing functional changes** are listed
 (new features, visible behavior changes); pure maintenance/refactors/data refreshes are omitted. Newest first.
 
+## 2026-07-01
+
+- **新增：PeeringDB 画像。** ASN 详情面板新增 PeeringDB 分区，展示该网络的**自报概况**（类型 / 流量规模 / 对等策略 / IRR as-set 等）、**接入的交换中心（IX presence）**（含端口速率、是否与 route server 对等）与**入驻的数据中心（facility presence）**。数据来自 CAIDA PeeringDB 快照，全部预处理成静态数据、前端零后端查询。
+  **Added: PeeringDB profiles.** The ASN detail panel gains a PeeringDB section showing the network's **self-reported profile** (type / traffic scale / peering policy / IRR as-set, etc.), its **IX presence** (with port speeds and route-server peering) and its **facility presence**. Data comes from the CAIDA PeeringDB snapshot, fully pre-processed into static assets with zero backend queries.
+- **新增：IXP 浏览器与 IX 目录。** 可查询任一互联网交换中心（IXP）的详情——**成员网络**（可即时筛选 / 排序、点行下钻 ASN）、**交换网段（IXLAN）与前缀**、**route server**、**所在数据中心**与总接入容量。配套 `peer.as/ixps` **按国家/地区浏览的 IX 目录**（SSR 落地页，利于检索与收录）。从 ASN 详情点某个 IX 时，左侧切到 IXP 视图、右侧详情面板保留不刷新。
+  **Added: an IXP browser and IX directory.** You can now look up any Internet Exchange Point (IXP) — its **member networks** (instant filter / sort, click a row to drill into the ASN), **peering LANs (IXLANs) and prefixes**, **route servers**, **facilities** and total connected capacity. A companion `peer.as/ixps` **IX directory by country/region** (SSR landing pages) aids discovery and indexing. Clicking an IX from an ASN detail opens the IXP view on the left while keeping the detail panel on the right.
+- **革新：全新搜索建议下拉。** 顶栏搜索框与 WHOIS 首页命令行现在共用同一套**智能建议**：输入即给出分组结果——**直达**（ASN / 前缀 / 域名 / as-set）、**自治系统**（按 AS 名反查）、**交换中心**（按 IX 名 / 城市），配合**最近搜索历史**；支持键盘上下选择、回车直达。
+  **Revamped: a new search-suggestions dropdown.** The top-bar search and the WHOIS home command line now share one **smart-suggestion** engine: as you type it groups results into **direct hits** (ASN / prefix / domain / as-set), **autonomous systems** (reverse AS-name lookup) and **exchanges** (by IX name / city), alongside your **recent-search history**, with arrow-key navigation and Enter-to-go.
+- **改进：WHOIS 首页直接展示完整详情。** 首页查询结果不再是浅层 WHOIS 卷宗——现在内联展开与详情面板一致的**完整信息**（ASN 含 PeeringDB / 邻居关系 / 通告前缀；前缀含路径图 / IRR / RPKI / 全部观测路径；域名含 DNS/RDAP），无需再点「查看更多」跳转。
+  **Improved: the WHOIS home page now shows full details inline.** Home-page results are no longer a shallow WHOIS card — they inline the **complete information** matching the detail panel (ASN with PeeringDB / neighbors / originated prefixes; prefix with the path graph / IRR / RPKI / all observed paths; domain with DNS/RDAP), with no more «see more» hop.
+- **改进：设施 / 交换中心行显示所在国家/地区国旗。** PeeringDB 设施行、IX 目录与详情标题前加上对应国家/地区的旗标，一眼定位地理归属。
+  **Improved: country/region flags on facility & exchange rows.** PeeringDB facility rows and IX directory/detail headers now show the corresponding country/region flag for quick geographic orientation.
+
 ## 2026-06-16
 
 - **新增：NextTrace traceMap 可直接在全球网测地球上打开。** NextTrace 生成的 traceMap 链接现在可通过
