@@ -127,14 +127,27 @@ def ensure_dump(cfg: dict) -> Path | None:
         return dst
     util.log(f"  下载 PeeringDB dump: {url}")
     tmp = dst.with_suffix(".tmp")
-    with requests.get(url, stream=True, timeout=300) as r:
-        r.raise_for_status()
-        with tmp.open("wb") as fp:
-            for chunk in r.iter_content(1024 * 1024):
-                if chunk:
-                    fp.write(chunk)
-    tmp.replace(dst)
-    return dst
+    try:
+        with requests.get(url, stream=True, timeout=300) as r:
+            r.raise_for_status()
+            with tmp.open("wb") as fp:
+                for chunk in r.iter_content(1024 * 1024):
+                    if chunk:
+                        fp.write(chunk)
+        tmp.replace(dst)
+        return dst
+    except Exception as e:
+        # 下载失败(CAIDA 临时不可达等): 回退到最近一次成功缓存的 dump —— 保证 PeeringDB/IXP
+        # 不因一次瞬时抖动整体下线(缓存目录不被 deploy 清缓存触及, 见 deploy.sh 只清 mrt/duck_tmp)。
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            pass
+        cached = _cached_files()
+        if cached:
+            util.log(f"  PeeringDB: 下载失败({e}); 回退缓存 {cached[-1].name}", err=True)
+            return cached[-1]
+        raise
 
 
 def _write_csv(path: Path, rows: list[tuple]) -> None:
