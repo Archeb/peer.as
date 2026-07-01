@@ -124,14 +124,15 @@ edge=cn
 
 		# ── 边缘 SEO SSR: 落地页反代到本机自托管 SSR(peeras-ssr.service, 127.0.0.1:8788)─────
 		# 覆盖 worker matchRoute 的全部 SEO 路由: / · /<asn>(纯数字) · /asset/* · /networks[/​*] ·
-		# /advanced · /trace · /probe。其余(前缀 /1.1.1.0/24、/dns-query、/whois、/og、/data、/assets…)
+		# /ixps[/​*](IX 目录, 同 /networks 范式) · /advanced · /trace · /probe。
+		# 其余(前缀 /1.1.1.0/24、/dns-query、/whois、/og、/data、/assets…)
 		# **不在此列** → 落到后面的静态/反代/SPA 回退, 行为不变。
 		# (取代旧的 /networks→bgp-insights.pages.dev 反代: CF 上 SSR 已默认关停, 那边只剩静态 SPA、
 		#  不再渲染目录页; 改由本机 SSR 统一出 /networks 及所有落地页。canonical 仍恒指 peer.as。)
 		# Host 透传(peer.as / cn.peer.as)→ wrapper 据此定品牌; 数据走服务内本地盘环回, 不跨源。
 		# CF for SaaS 回源带 Host=peer.as、SNI=peer.as(已实测), 故经 CF 的海外流量同样命中这里。
 		@seo {
-			path_regexp ^/(\d+|asset/.*|networks(/.*)?|advanced|trace|probe)?$
+			path_regexp ^/(\d+|asset/.*|networks(/.*)?|ixps(/.*)?|advanced|trace|probe)?$
 		}
 		handle @seo {
 			reverse_proxy 127.0.0.1:8788
