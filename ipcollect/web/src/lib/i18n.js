@@ -52,6 +52,7 @@ export const STRINGS = {
     // IRR as-set 客户锥层级树
     asset_direct_members: '个直接成员', asset_also_in: '也登记于', asset_no_members: '无成员',
     asset_notfound: 'as-set “{k}” 在 IRR 中无登记', asset_unresolved: '该子集在所选库中无登记(未解析)',
+    asset_unavailable: '本数据集未包含 IRR as-set 数据（需带 as-set 导出的数据才能浏览）',
     asset_cycle: '环引用(此 as-set 已在上层出现)', asset_too_deep: '层级过深, 已停止展开',
     asn_memberof: '所属 as-set', asset_open: '展开此 as-set',
     v6_soon: 'IPv6 暂未支持（计划中）', q_bad: '无法识别：请输入 IP / CIDR / ASN',
@@ -60,7 +61,7 @@ export const STRINGS = {
     // ── 详情面板导航 / ASN 视图 / WHOIS ──
     nav_back: '后退', nav_fwd: '前进', detail_close: '关闭',
     sec_graph: '路由图', sec_rel: '父子段', sec_paths: '去重路径', sec_whois: 'WHOIS',
-    sec_originated: '通告前缀', sec_relations: '观测关系', sec_neighbors: '邻居', sec_memberof: '所属 as-set',
+    sec_originated: '通告前缀', sec_relations: '观测关系', sec_neighbors: '邻居', sec_memberof: '所属 as-set', sec_peeringdb: 'PeeringDB',
     show_all: '展开全部 {n} 条', collapse: '收起',
     asn_title: 'ASN 详情', asn_originated: '通告的前缀',
     asn_handle: '注册名', asn_org: '组织',
@@ -76,7 +77,7 @@ export const STRINGS = {
     asn_scanned: '扫描了 {n} 条前缀记录', asn_capped: '（已截断）', asn_neigh_pre: '基于全网观测路径',
     whois_open: '查看该 ASN 的 WHOIS 详情', whois_title: 'WHOIS / 注册信息（RDAP）', whois_src: '来源', whois_more: '展开', whois_none: '无注册信息',
     // ── 视图导航 + WHOIS·RDAP 独立视图 ──
-    home: '回到首页', nav_views: '视图', nav_routing: '路由分析', nav_whois: '首页', nav_probe: 'IP 探测', nav_networks: '网络目录',
+    home: '回到首页', nav_views: '视图', nav_routing: 'BGP 观测', nav_whois: '首页', nav_probe: 'IP 探测', nav_networks: '网络目录', nav_ix_dir: 'IX 目录', nav_ixp: 'IXP',
     probe_pin: '在首页显示探测结果', probe_unpin: '不在首页显示探测结果',
     wv_adv: '专业版', wv_adv_hint: '勾选后直接进入路由分析（AS_PATH / 地区 / 子网 等高级查询），不再显示简洁 WHOIS',
     wv_ph: '输入 ASN / IP / 前缀 / 域名…',
@@ -87,6 +88,20 @@ export const STRINGS = {
     wv_more_prefix: '查看此前缀的完整详情（路由 · RPKI · IRR）',
     wv_more_ip: '查看覆盖此 IP 的前缀',
     wv_t_asn: 'ASN', wv_t_ipv4: 'IPv4', wv_t_ipv6: 'IPv6', wv_t_cidr: '前缀', wv_t_domain: '域名', wv_t_none: '—',
+    // ── PeeringDB / IXP ──
+    ixp_title: '交换中心', ixp_search: '搜索 IX / 城市 / 国家', ixp_showing: '显示 {n} 个 IX',
+    ixp_pick: '在上方搜索框输入 IX 名称跳转，或从「IX 目录」按地区浏览', ixp_members: '成员', ixp_facilities: '机房',
+    ixp_capacity: '端口容量', ixp_lans: '交换 LAN', ixp_prefixes: '交换网段', ixp_speed: '速率', ixp_member_filter: '筛选成员（ASN / 名称 / IP）',
+    ixp_popular: '热门交换中心',
+    // ── 顶栏搜索框(历史 + 建议)──
+    sb_recent: '最近搜索', sb_recent_clear: '清空', sb_g_jump: '直达', sb_g_as: '自治系统', sb_g_ix: '交换中心',
+    sb_open_prefix: '打开前缀详情', sb_search_name: '按名称搜索 “{q}”', sb_no_recent: '暂无最近搜索',
+    sb_more: '继续输入以搜索…', sb_none: '无匹配结果',
+    pdb_missing: '当前数据版本未包含 PeeringDB', pdb_web: '网站', pdb_stats: '流量统计',
+    pdb_networks: '网络', pdb_none: 'PeeringDB 中暂无该 ASN 的记录',
+    pdb_type: '类型', pdb_scope: '范围', pdb_traffic: '流量', pdb_ratio: '流量方向',
+    pdb_policy: '对等策略', pdb_contracts: '合同', pdb_locations: '位置要求', pdb_prefixes: '自报前缀',
+    pdb_policy_url: '策略', pdb_ix_presence: 'IXP 接入', pdb_fac_presence: '机房存在点',
     // ── 首页「你的接入」自助探测卡片 ──
     sp_title: '你的接入',
     sp_probing: '正在探测…', sp_v4none: '未探测到 IPv4 出口', sp_v6none: '未探测到 IPv6 出口',
@@ -184,6 +199,7 @@ export const STRINGS = {
     // IRR as-set customer-cone tree
     asset_direct_members: 'direct members', asset_also_in: 'also registered in', asset_no_members: 'no members',
     asset_notfound: 'as-set “{k}” is not registered in IRR', asset_unresolved: 'this child set is not registered in the selected sources (unresolved)',
+    asset_unavailable: 'IRR as-set data is not included in this dataset (needs an as-set-enabled export to browse)',
     asset_cycle: 'cycle (this as-set already appears above)', asset_too_deep: 'too deep, expansion stopped',
     asn_memberof: 'member of as-sets', asset_open: 'open this as-set',
     v6_soon: 'IPv6 not supported yet (planned)', q_bad: 'Unrecognized — enter an IP / CIDR / ASN',
@@ -192,7 +208,7 @@ export const STRINGS = {
     // ── detail nav / ASN view / WHOIS ──
     nav_back: 'Back', nav_fwd: 'Forward', detail_close: 'Close',
     sec_graph: 'Route graph', sec_rel: 'Relations', sec_paths: 'Paths', sec_whois: 'WHOIS',
-    sec_originated: 'Prefixes', sec_relations: 'Relationships', sec_neighbors: 'Neighbors', sec_memberof: 'member of as-sets',
+    sec_originated: 'Prefixes', sec_relations: 'Relationships', sec_neighbors: 'Neighbors', sec_memberof: 'member of as-sets', sec_peeringdb: 'PeeringDB',
     show_all: 'Show all {n}', collapse: 'Collapse',
     asn_title: 'ASN detail', asn_originated: 'Originated prefixes',
     asn_handle: 'AS name', asn_org: 'Org',
@@ -208,7 +224,7 @@ export const STRINGS = {
     asn_scanned: 'scanned {n} prefix records', asn_capped: ' (capped)', asn_neigh_pre: 'from all observed paths',
     whois_open: 'Open WHOIS detail for this ASN', whois_title: 'WHOIS / registration (RDAP)', whois_src: 'source', whois_more: 'expand', whois_none: 'no registration data',
     // ── view nav + WHOIS·RDAP standalone view ──
-    home: 'Home', nav_views: 'Views', nav_routing: 'Routing', nav_whois: 'Home', nav_probe: 'IP Probe', nav_networks: 'Networks',
+    home: 'Home', nav_views: 'Views', nav_routing: 'BGP Insight', nav_whois: 'Home', nav_probe: 'IP Probe', nav_networks: 'Networks', nav_ix_dir: 'IX Directory', nav_ixp: 'IXPs',
     probe_pin: 'Show probe on home', probe_unpin: 'Hide probe from home',
     wv_adv: 'Pro', wv_adv_hint: 'Send every query straight to routing analysis (AS_PATH / region / subnet …) instead of the simple WHOIS view',
     wv_ph: 'Enter an ASN / IP / prefix / domain…',
@@ -219,6 +235,20 @@ export const STRINGS = {
     wv_more_prefix: 'View full details for this prefix (routing · RPKI · IRR)',
     wv_more_ip: 'View prefixes covering this IP',
     wv_t_asn: 'ASN', wv_t_ipv4: 'IPv4', wv_t_ipv6: 'IPv6', wv_t_cidr: 'Prefix', wv_t_domain: 'Domain', wv_t_none: '—',
+    // ── PeeringDB / IXP ──
+    ixp_title: 'Internet exchanges', ixp_search: 'Search IX / city / country', ixp_showing: 'Showing {n} IXPs',
+    ixp_pick: 'Search an exchange name in the box above, or browse by region in the IX Directory', ixp_members: 'Members', ixp_facilities: 'Facilities',
+    ixp_capacity: 'Port capacity', ixp_lans: 'Exchange LANs', ixp_prefixes: 'LAN prefixes', ixp_speed: 'Speed', ixp_member_filter: 'Filter members (ASN / name / IP)',
+    ixp_popular: 'Popular exchanges',
+    // ── Topbar search (history + suggestions) ──
+    sb_recent: 'Recent', sb_recent_clear: 'Clear', sb_g_jump: 'Go to', sb_g_as: 'Networks', sb_g_ix: 'Exchanges',
+    sb_open_prefix: 'Open prefix detail', sb_search_name: 'Search “{q}”', sb_no_recent: 'No recent searches',
+    sb_more: 'Keep typing…', sb_none: 'No matches',
+    pdb_missing: 'This data version does not include PeeringDB', pdb_web: 'Website', pdb_stats: 'Traffic stats',
+    pdb_networks: 'networks', pdb_none: 'No PeeringDB record for this ASN',
+    pdb_type: 'Type', pdb_scope: 'Scope', pdb_traffic: 'Traffic', pdb_ratio: 'Traffic ratio',
+    pdb_policy: 'Peering policy', pdb_contracts: 'Contracts', pdb_locations: 'Location requirement', pdb_prefixes: 'Self-reported prefixes',
+    pdb_policy_url: 'Policy', pdb_ix_presence: 'IXP presence', pdb_fac_presence: 'Facility presence',
     // ── Home "Your connection" self-probe card ──
     sp_title: 'Your connection',
     sp_probing: 'Probing…', sp_v4none: 'No IPv4 egress detected', sp_v6none: 'No IPv6 egress detected',

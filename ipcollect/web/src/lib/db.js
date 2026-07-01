@@ -2,6 +2,7 @@
 import { S } from './store.svelte.js'
 import { features } from './site.js'
 import { t } from './i18n.js'
+import { warmAsnNameIndex, setAsnNameData } from './bgp.js'
 import { progressBegin, progressSet, progressFinish, progressAbort } from './progress.js'
 // DuckDB-WASM 资产经 Vite `?url` 打包: 输出带内容 hash 的独立资源(不内联到 JS), 随 dist 部署。
 // **wasm 自托管的边界**: CN 镜像(Caddy, 无大小限制)同源托管完整 wasm;**CF Pages 单文件 ≤25MiB,
@@ -66,6 +67,9 @@ async function fetchT(url, opts = {}, ms = 2000) {
 // 启动时调用一次: 选定数据宿主(wasm/worker 已打包同源, 见 wasmSrcs)。
 export async function configure() {
   DATA = OVERSEAS; edge = 'cf'   // 默认(海外 CF): 走独立数据项目 data.peer.as
+  // Vite dev server 可能通过 0.0.0.0 暴露后用 LAN IP / 临时域名访问, 这些 host 不会命中
+  // localhost 分支, 也没有真实 /cdn-cgi/trace。开发态始终用 web/public/data(本 worktree 的 dist/data symlink)。
+  if (import.meta.env.DEV) { DATA = SAME; edge = 'cn'; return edge }
   // 本站无 cn.peer.as 整站镜像(profile cn_mirror=false, 如 dn42): 永远同源(其前端项目自带 /data),
   // 不做任何 CN 探测/分流, 也不碰 data.peer.as(那是 peeras 数据集, dn42 切过去会加载错 meta/parquet 直接炸)。
   if (!features.cnMirror) { DATA = SAME; return edge }
@@ -281,8 +285,17 @@ export function ensureEngine() {
   _enginePromise = (async () => {
     S.loading = true
     // meta 失败不阻断引擎初始化(App 会另置 fatal); 但 happy path 必须等到, 否则查询读空文件清单。
-    try { await ensureMeta() } catch (e) { /* meta 不可达: 查询将空, App 已置 fatal */ }
-    const asnP = getData(`/asnames.json${dv()}`).then(n => { S.asnNames = n }).catch(() => {})
+    // 捕获原始 meta(明文, 非 $state 代理): AS 名反查索引要迭代 asn_names / asn_names_en, 用明文绕开代理 trap。
+    let rawMeta = null
+    try { rawMeta = await ensureMeta() } catch (e) { /* meta 不可达: 查询将空, App 已置 fatal */ }
+    // asnames 到位后, 把原始明文对象交给 bgp 建索引(不迭代代理), 并在空闲期预建 —— 不落在首次按键上, 免首搜卡顿。
+    const asnP = getData(`/asnames.json${dv()}`).then(n => {
+      S.asnNames = n
+      setAsnNameData({ full: n, reg: rawMeta && rawMeta.asn_names, regEn: rawMeta && rawMeta.asn_names_en })
+      const warm = () => warmAsnNameIndex()
+      if (typeof requestIdleCallback === 'function') requestIdleCallback(warm, { timeout: 2000 })
+      else setTimeout(warm, 300)
+    }).catch(() => {})
     const orgP = getData(`/asnorg.json${dv()}`).then(o => { S.asnOrg = o }).catch(() => {})
     try { await initDuck() }
     catch (e) { progressAbort(); S.fatal = `DuckDB-WASM: ${e.message}`; S.loading = false; _enginePromise = null; throw e }
@@ -419,6 +432,13 @@ function _strIdxFiles(allName, idxName, key) {
   const hits = idx.filter(it => it.lo <= key && key <= it.hi).map(it => it.f)
   return hits.length ? hits : []
 }
+function _numIdxFiles(allName, idxName, key) {
+  const all = S.meta?.files?.[allName] || []
+  const idx = S.meta?.files?.[idxName]
+  if (!idx || !idx.length || key == null) return all
+  const hits = idx.filter(it => it.lo != null && it.hi != null && key >= it.lo && key <= it.hi).map(it => it.f)
+  return hits.length ? hits : []
+}
 // ASN 邻接计数(asn_neigh)按 asn 数值区间索引: 完整邻居只读覆盖该 asn 的 1 分片。无覆盖=该 asn 不在邻接表。
 export function asnNeighFilesForAsn(asn) {
   const idx = S.meta?.files?.asn_neigh_key
@@ -432,6 +452,14 @@ export const assetSetFiles = () => S.meta?.files?.asset_set || []   // 全部(�
 export const assetSetFilesForKey = key => _strIdxFiles('asset_set', 'asset_set_key', key)
 export const assetMemberFilesForKey = key => _strIdxFiles('asset_member', 'asset_member_key', key)
 export const assetMemberOfFilesForKey = m => _strIdxFiles('asset_memberof', 'asset_memberof_key', m)
+export const peeringdbFiles = name => S.meta?.files?.[name] || []
+export const peeringdbNetFilesForAsn = asn => _numIdxFiles('pdb_net', 'pdb_net_asn', asn)
+export const peeringdbNetixlanFilesForAsn = asn => _numIdxFiles('pdb_netixlan_asn', 'pdb_netixlan_asn_key', asn)
+export const peeringdbNetixlanFilesForIx = ix => _numIdxFiles('pdb_netixlan_ix', 'pdb_netixlan_ix_key', ix)
+export const peeringdbNetfacFilesForAsn = asn => _numIdxFiles('pdb_netfac_asn', 'pdb_netfac_asn_key', asn)
+export const peeringdbIxFilesForIx = ix => _numIdxFiles('pdb_ix', 'pdb_ix_key', ix)
+export const peeringdbIxlanFilesForIx = ix => _numIdxFiles('pdb_ixlan', 'pdb_ixlan_ix', ix)
+export const peeringdbIxfacFilesForIx = ix => _numIdxFiles('pdb_ixfac', 'pdb_ixfac_ix_key', ix)
 
 // 多个 origin ASN -> 覆盖它们的 pathsearch 文件并集(两族)。全都无覆盖才返回 null。
 export function pathsearchFilesForOrigins(asns) {

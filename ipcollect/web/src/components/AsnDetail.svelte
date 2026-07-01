@@ -7,6 +7,7 @@
   import { iPrefix, iUp, iDown, iRange, iNodes, iSpinner, iUsers } from '../lib/icons.js'
   import Whois from './Whois.svelte'
   import RelGroup from './RelGroup.svelte'
+  import PeeringDbBlock from './PeeringDbBlock.svelte'
 
   let a = $derived(S.asnView)
   let total = $derived((a?.count4 || 0) + (a?.count6 || 0))
@@ -49,6 +50,10 @@
 
     <!-- WHOIS / RDAP -->
     <Whois kind="autnum" rkey={a.asn} />
+
+    {#if S.meta?.has_peeringdb && a.peeringdb}
+      <PeeringDbBlock data={a.peeringdb} />
+    {/if}
 
     {#if !a.loading}
       <!-- 通告前缀 -->

@@ -39,6 +39,7 @@
   - **/networks 国家分流目录(SEO 内链枢纽)**:`/networks`(国家网格)→ `/networks/<cc>[/<page>]`(该国 ASN 列表,500/页,链到 `/<asn>`)。由 `_worker.js` 渲染**独立目录页(非 SPA 外壳,双语 `?lang`)**,数据 `data/seo/networks.json`(export 从 autnums 末段 CC 建 asn→国家)。首页(EntrySeo + SPA WhoisView)有可见入口链接;sitemap 收录全部。**`/networks*` 与所有 SEO 落地页一样由 VPS 自托管 SSR(`peeras-ssr.service`)渲染**,Caddy `@seo` reverse_proxy 到 `127.0.0.1:8788`(取代旧的反代 CF Worker)。
   - **OG 大图(社交分享卡)**:VPS 自托管 SSR(`peeras-ssr`)给 ASN/AS-SET/入口页注入 `og:image`,**用品牌域 `peer.as/og/*`**(2026-06-18 从 cn.peer.as 改回;VPS 现为唯一源,且经 CF for SaaS 还吃边缘缓存)→ **CN VPS 上的 Pillow 渲染器**(`deploy/og-renderer.py`,systemd `og-renderer.service`,监听 127.0.0.1:8092,Caddy 反代 `/og/*`)。它读本机 `/var/www/cn/data/{seo/*.json,asnames.json,meta.json}` 画 1200×630 PNG(ASN 卡含 IPv4/IPv6/Peers + 右下角「最新采集点快照时刻」;中文用 Noto Sans CJK SC),磁盘缓存 systemd `CacheDirectory=/var/cache/og-renderer`(**不可放 /var/www/cn —— 会被 deploy rsync --delete 清掉**;按源 JSON mtime 失效)。`asn.json` 含第 3 元素 peers(来自 asn_neigh)。**手动部署**(同 Caddyfile,deploy.sh 不管):改 `og-renderer.py` 后 `scp 到 /opt/og-renderer/ && systemctl restart og-renderer`;改 Caddyfile 后 `scp 到 /etc/caddy/Caddyfile && caddy validate && systemctl reload caddy`。dn42 已无 SSR(不渲染落地页)→ 不出 `og:image`。
 - `rpki.py` / `irr.py` / `asset.py` — 路由起源验证（RPKI ROA / IRR route / IRR as-set 锥）。导出期预计算成静态列/数据集，前端零后端查询；`meta.has_*` 缺失即前端降级。
+- `peeringdb.py` — CAIDA PeeringDB dump → 静态 Parquet：ASN PeeringDB 画像、IXP/IXLAN/交换网段、ASN-at-IXP、facility presence。原始 dump 只落 `cache/peeringdb/`，发布只出裁剪后的 `data/parquet/peeringdb/*`；`meta.has_peeringdb` 缺失即前端隐藏 IXP/PeeringDB 入口。
 - `profile.py` — 站点 profile（peeras / dn42）特性开关（见下「站点 Profile」）。
 - `registry.py` — dn42 专用：RPSL registry 解析 → 逐 ASN/域名静态 whois。
 - `serve.py` — 本地 debug 静态托管（支持 Range）。
@@ -152,6 +153,7 @@ DuckDB-WASM、Cache Storage 大 wasm 缓存、parquet 扩展自托管、全 GET 
 - **前端改 `ipcollect/web/*` 后必须 `npm run build`**（`ipc build` 会跑）才进 dist；**改 `CHANGELOG.md` 也要重 build**（前端内联它）。
 - **export 会先 `rmtree(dist/data/parquet)` 全部重写**（文件名/计数每次变，故 URL 带 `?v=` 失效）。
 - `ipcollect.duckdb` 是中间态（已 gitignore）；`--reset` 清 obs/pathobs/prefix，**保留 geo/asn_dim/country_dim**。
+- **PeeringDB 是自报数据，不是 BGP 观测事实**：可用于 ASN/IXP 展示、筛选和共同 IXP 候选提示；不得把共同 IX、端口速率或 policy 字段当作 AS_PATH 邻接/上下游判定证据。
 - 多个性能关键点（pathsearch/byorigin/prefixes 的**单线程排序写 + 区间索引文件级裁剪**）：改导出分片逻辑前先读 `parquet_export.py` 与 `db.js` 的 `*FilesForRange/Origin`，**别改成多线程并行写**（会令区间重叠、裁剪失效）。
 
 ## CHANGELOG 约定

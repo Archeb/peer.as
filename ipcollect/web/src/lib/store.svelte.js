@@ -24,6 +24,8 @@ export const S = $state({
   // 全球路由跟踪视图载荷: target=当前跟踪目标(IP/域名); ntraceId=NextTrace traceMap JSON 深链。
   // 实际 MTR/traceMap 模型在 RouteTraceView 本地态(从流式事件/JSON 重建)。
   trace: { target: '' },
+  // PeeringDB/IXP 浏览器(mode==='ixp'): 左侧 IX 列表 + 右侧详情/成员。
+  ixp: { rows: [], query: '', selected: null, detail: null, loading: false, error: '' },
   // WHOIS·RDAP 独立视图载荷: input=用户原始输入串; kind/key=解析后传给 Whois 组件
   // (kind: 'autnum'|'ip'|'domain'; key=ASN号/IP·前缀串/可注册域名); err=识别失败的 i18n 键(空=正常)。
   whois: { input: '', kind: null, key: null, err: '' },
@@ -34,7 +36,7 @@ export const S = $state({
   // 首页是否默认显示「你的接入」探测卡片(侧栏 IP 探测旁的图钉钮切换, localStorage 记忆, App.onMount 初始化)。
   // 关掉后首页只留字标 + 查询框(仍居中); 仍可经侧栏「IP 探测」进完整探测视图。
   probePinned: true,
-  mode: 'prompt',          // prompt | country | global | subnet | dns
+  mode: 'prompt',          // prompt | country | global | subnet | dns | asset | ixp
   // DNS 解析视图载荷(mode==='dns' 时主内容区改渲染 DnsView): { domain, loading, error, status, a:[], aaaa:[], others:[] }
   // a/aaaa 行已富集前缀+origin asn(由 queries.runDns 查 prefixes 得到); others = 其它记录类型分组。
   dns: null,

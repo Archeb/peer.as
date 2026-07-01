@@ -4,9 +4,10 @@
   import { t } from '../lib/i18n.js'
   import { ccLabel, classifyQuery } from '../lib/bgp.js'
   import { resolveCC, searchNow, openWhoisFromBox, gotoPage, canExport } from '../lib/queries.js'
-  import { iCountry, iCity, iPath, iSubnet, iSearch, iClear, iHelp, iWhois, iUser, iArrowL, iArrowR, iDownload, iSpinner } from '../lib/icons.js'
+  import { iCountry, iCity, iPath, iSearch, iClear, iHelp, iWhois, iUser, iArrowL, iArrowR, iDownload, iSpinner } from '../lib/icons.js'
   import { features } from '../lib/site.js'
   import Field from './Field.svelte'
+  import SearchBox from './SearchBox.svelte'
 
   // 结果分页 / 导出栏: 仅 global/country/subnet 表格模式且有行时显示。
   let tableMode = $derived(['global', 'country', 'subnet'].includes(S.mode) && S.rows.length > 0)
@@ -52,8 +53,7 @@
       <!-- 移动端: 单按钮轮换地址族(替代上面的三段控件, 由 CSS 互斥显隐) -->
       <button type="button" class="fammob" class:act={(f.fam || 'all') !== 'all'} disabled={pathNA}
         title={t('fam_label')} aria-label={t('fam_label')} onclick={cycleFam}>{famLabel}</button>
-      <Field icon={iSubnet} bind:value={f.ip} placeholder={t('ph_ip')} big grow width=""
-        onenter={searchNow} />
+      <SearchBox bind:value={f.ip} onenter={searchNow} />
       <!-- ≤410px: 强制换行, 让搜索/WHOIS/清空整体落到第二行(否则窄屏精确框会被挤到自己一行, 破坏布局) -->
       <div class="rowbreak" aria-hidden="true"></div>
       <button class="gobtn big" onclick={searchNow}><Fa icon={iSearch} /> {t('search')}</button>

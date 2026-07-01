@@ -25,6 +25,7 @@ from typing import Any
 #   rpki       RPKI ROA 路由起源验证(rpki.py)。peeras=Cloudflare VRP; dn42=registry max-length。数据缺失时 has_rpki=False 自动 no-op。
 #   irr        IRR route 对象登记态(irr.py)。peeras=RIR/RADB dump; dn42=registry route 对象。数据缺失时 has_irr=False 自动 no-op。
 #   asset      IRR as-set 客户锥层级树(asset.py)。peeras=RIR/RADB as-set dump; dn42=registry data/as-set。数据缺失时 has_asset=False 自动 no-op。
+#   peeringdb  PeeringDB ASN/IXP/facility 数据集。公网站展示 IXP/peering 画像; dn42 无公网 PeeringDB 语义。
 PROFILES: dict[str, dict[str, Any]] = {
     "peeras": {
         "geo": True,
@@ -33,6 +34,7 @@ PROFILES: dict[str, dict[str, Any]] = {
         "rpki": True,
         "irr": True,
         "asset": True,
+        "peeringdb": True,
     },
     "dn42": {
         "geo": False,
@@ -41,6 +43,7 @@ PROFILES: dict[str, dict[str, Any]] = {
         "rpki": True,
         "irr": True,
         "asset": True,
+        "peeringdb": False,
     },
 }
 

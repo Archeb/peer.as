@@ -68,6 +68,11 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "registry_repo": "",
     # 全球 ASN 名称表(APNIC): 给所有 AS 显示 asname(config.asn_registry 里特别标注的优先)。
     "autnums_url": "https://thyme.apnic.net/current/data-used-autnums",
+    # PeeringDB/IXP 画像数据(CAIDA public dump)。默认自动发现 CAIDA 最新月度 dump; 如需固定版本可设
+    # peeringdb_dump_url 或环境变量 IPC_PEERINGDB_DUMP_URL。peeringdb_enabled=false 可关闭。
+    "peeringdb_enabled": True,
+    "peeringdb_base_url": "https://publicdata.caida.org/datasets/peeringdb",
+    "peeringdb_dump_url": "",
     # 站点根 URL(SEO canonical/sitemap 用)
     "site_base": "https://peer.as",
 

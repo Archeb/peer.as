@@ -29,7 +29,7 @@ const [_SPW, _SPH, , , _SPD] = iSpinner.icon
 const SPINNER = `<svg viewBox="0 0 ${_SPW} ${_SPH}" fill="currentColor" aria-hidden="true"><path d="${_SPD}"/></svg>`
 
 // ── isolate 级缓存(promise) ──────────────────────────────────────────
-let _asnP, _asnamesP, _assetP, _netP, _metaP, _ctx
+let _asnP, _asnamesP, _assetP, _netP, _ixP, _metaP, _ctx
 // 数据源(每个 isolate 首请求设一次):
 //  - dn42:同源 env.ASSETS(无独立数据项目)。
 //  - peeras:默认从 **data.peer.as 跨源** fetch(CF Pages 部署,前端项目不含 /data)。
@@ -52,6 +52,7 @@ const asnData = () => (_asnP ??= loadJson('/data/seo/asn.json'))
 const asnames = () => (_asnamesP ??= loadJson('/data/asnames.json'))
 const assetData = () => (_assetP ??= loadJson('/data/seo/asset.json'))
 const netData = () => (_netP ??= loadJson('/data/seo/networks.json'))
+const ixDirData = () => (_ixP ??= loadJson('/data/seo/ixps.json'))
 const metaData = () => (_metaP ??= loadJson('/data/meta.json'))
 
 // og:image 版本号 = 最新采集点快照时刻(同 renderer 用的 snap_ts;缺则 generated_ts)。
@@ -382,6 +383,93 @@ async function renderNetworks(url, request, env) {
   }
 }
 
+// ── /ixps IX 目录(独立 SEO 页, 同 /networks 范式; 按国家/地区浏览 PeeringDB 交换中心)──
+const IX_PER_PAGE = 500   // 与 ssg.py IX_PER_PAGE 必须一致(分页 URL 对得上)。
+
+function renderIxHub(ixd, lang, brand, canonical) {
+  const zh = lang === 'zh'
+  const title = zh ? `按国家和地区浏览互联网交换中心(IXP) · ${brand}` : `Browse Internet Exchanges (IXP) by country/region · ${brand}`
+  const desc = zh
+    ? `按国家和地区浏览全球互联网交换中心(IXP):各地的对等交换点、成员网络与交换网段。${brand} BGP/IP/ASN 情报目录。`
+    : `Browse Internet Exchange Points (IXP) by country/region: peering exchanges, their member networks and LAN prefixes. ${brand} BGP/IP/ASN directory.`
+  const items = (ixd.countries || []).map(c => {
+    const name = zh ? (c.zh || c.cc) : (c.en || c.cc)
+    return `<a href="/ixps/${c.cc}${lq(lang)}"><span>${esc(name)} <span class="n">(${c.cc})</span></span>` +
+      `<span class="n">${c.n.toLocaleString()} IX</span></a>`
+  }).join('')
+  const body = `<header class="bar"><a class="brand" href="/${lq(lang)}">PEER<span class="hi">.AS</span></a></header>` +
+    `<div class="crumb">${zh ? '首页' : 'Home'} / ${zh ? 'IX 目录' : 'IX Directory'}</div>` +
+    `<h1>${zh ? '按国家和地区浏览互联网交换中心(IXP)' : 'Internet Exchanges by country/region'}</h1>` +
+    `<p class="lede">${zh ? `${(ixd.countries || []).length} 个国家和地区` : `${(ixd.countries || []).length} countries/regions`}</p>` +
+    `<div class="grid">${items}</div>`
+  return netDoc(lang, title, desc, canonical, body)
+}
+
+function renderIxCountry(ixd, cc, page, lang, brand, canonicalBase) {
+  const zh = lang === 'zh'
+  const all = (ixd.ixps || {})[cc]
+  if (!all) return null
+  const meta = (ixd.countries || []).find(c => c.cc === cc) || { cc }
+  const cname = zh ? (meta.zh || cc) : (meta.en || cc)
+  const pages = Math.max(1, Math.ceil(all.length / IX_PER_PAGE))
+  page = Math.min(Math.max(1, page), pages)
+  const slice = all.slice((page - 1) * IX_PER_PAGE, page * IX_PER_PAGE)
+  // 条目 = [ix_id, name, city, net_count]; 链接指向 SPA 深链 /ixp/<id>。
+  const li = slice.map(r => {
+    const [id, nm, city, nets] = r
+    const loc = city ? `<span class="nm">${esc(city)}</span>` : ''
+    const pf = `<span class="pf">${Number(nets || 0).toLocaleString()} ${zh ? '成员' : 'networks'}</span>`
+    return `<li><a href="/ixp/${id}${lq(lang)}">${esc(nm)}</a> ${loc} ${pf}</li>`
+  }).join('')
+  const purl = p => canonicalBase + (p > 1 ? '/' + p : '') + lq(lang)
+  let pager = ''
+  if (pages > 1) {
+    const parts = []
+    parts.push(page > 1 ? `<a href="${purl(page - 1)}">${zh ? '上一页' : 'Prev'}</a>` : `<span class="dis">${zh ? '上一页' : 'Prev'}</span>`)
+    const lo = Math.max(1, page - 2), hi = Math.min(pages, page + 2)
+    if (lo > 1) parts.push(`<a href="${purl(1)}">1</a>`, lo > 2 ? '<span class="dis">…</span>' : '')
+    for (let p = lo; p <= hi; p++) parts.push(p === page ? `<span class="cur">${p}</span>` : `<a href="${purl(p)}">${p}</a>`)
+    if (hi < pages) parts.push(hi < pages - 1 ? '<span class="dis">…</span>' : '', `<a href="${purl(pages)}">${pages}</a>`)
+    parts.push(page < pages ? `<a href="${purl(page + 1)}">${zh ? '下一页' : 'Next'}</a>` : `<span class="dis">${zh ? '下一页' : 'Next'}</span>`)
+    pager = `<div class="pager">${parts.filter(Boolean).join('')}</div>`
+  }
+  const pageSuffix = pages > 1 ? (zh ? ` · 第 ${page}/${pages} 页` : ` · page ${page}/${pages}`) : ''
+  const title = (zh ? `${cname} 的互联网交换中心(IXP)` : `Internet Exchanges in ${cname}`) + pageSuffix + ` · ${brand}`
+  const desc = zh
+    ? `${cname}(${cc})的 ${all.length.toLocaleString()} 个互联网交换中心(IXP)及其成员网络。${brand} BGP/IP/ASN 目录。`
+    : `${all.length.toLocaleString()} Internet Exchange Points (IXP) in ${cname} (${cc}) and their member networks. ${brand} BGP/IP/ASN directory.`
+  const canonical = `https://peer.as${canonicalBase}${page > 1 ? '/' + page : ''}`
+  const body = `<header class="bar"><a class="brand" href="/${lq(lang)}">PEER<span class="hi">.AS</span></a></header>` +
+    `<div class="crumb"><a href="/${lq(lang)}">${zh ? '首页' : 'Home'}</a> / <a href="/ixps${lq(lang)}">${zh ? 'IX 目录' : 'IX Directory'}</a> / ${esc(cname)}</div>` +
+    `<h1>${zh ? `${esc(cname)} 的互联网交换中心` : `Internet Exchanges in ${esc(cname)}`}</h1>` +
+    `<p class="lede">${all.length.toLocaleString()} IXP${pageSuffix}</p>` +
+    `<ul class="asns">${li}</ul>${pager}`
+  return netDoc(lang, title, desc, canonical, body)
+}
+
+async function renderIxps(url, request, env) {
+  try {
+    setCtx(env, url.origin, url.host)
+    const lang = pickLang(url, request)
+    const brand = brandOf(url.host)
+    const ixd = await ixDirData()
+    if (!ixd || !ixd.countries) return env.ASSETS.fetch(request)   // 无数据(如 dn42) -> 回退
+    const path = url.pathname.replace(/\/+$/, '')
+    if (path === '/ixps') {
+      const html = renderIxHub(ixd, lang, brand, `https://peer.as/ixps`)
+      return new Response(html, { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'public, max-age=3600', 'x-seo-ssr': 'ixps' } })
+    }
+    const m = /^\/ixps\/([A-Za-z]{2})(?:\/(\d{1,4}))?$/.exec(path)
+    if (!m) return env.ASSETS.fetch(request)
+    const cc = m[1].toUpperCase(), page = m[2] ? parseInt(m[2], 10) : 1
+    const html = renderIxCountry(ixd, cc, page, lang, brand, `/ixps/${cc}`)
+    if (!html) return env.ASSETS.fetch(request)
+    return new Response(html, { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'public, max-age=3600', 'x-seo-ssr': 'ixps-cc' } })
+  } catch (e) {
+    return env.ASSETS.fetch(request)
+  }
+}
+
 // 已定义路由(ASN / AS-SET)但库内无该记录 -> 渲染通用 404 落地页(status 404, SEO 正确;
 // 加载罩盖住 bot 内容, SPA 启动后照常按 URL 接管)。subject = 显示给用户的请求对象(AS<n> / set 键)。
 async function render404(env, base, { url, lang, brand, host, subject }) {
@@ -415,6 +503,8 @@ export default {
       setCtx(env, url.origin, url.host)   // 选定数据源(peeras -> data.peer.as 跨源; dn42 -> 同源)
       // /networks[/<cc>[/<page>]] = 独立国家分流目录(非 SPA 外壳),自带 try/回退。
       if (url.pathname === '/networks' || url.pathname.startsWith('/networks/')) return renderNetworks(url, request, env)
+      // /ixps[/<cc>[/<page>]] = 独立 IX 目录(同上范式),自带 try/回退。
+      if (url.pathname === '/ixps' || url.pathname.startsWith('/ixps/')) return renderIxps(url, request, env)
       const r = matchRoute(url.pathname)
       if (!r) return env.ASSETS.fetch(request)
 

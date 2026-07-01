@@ -7,7 +7,7 @@
   import { cycleTheme, toggleLang } from '../lib/ui.js'
   import { setView, openProbe, openTrace } from '../lib/queries.js'
   import { genAgo, genUtc } from '../lib/clock.svelte.js'
-  import { iMenu, iClose, iPrefix, iPath, iGlobal, iClock, iTheme, iLang, iAbout, iRepo, iIssue, iChangelog, iNodes, iWhois, iProbe, iSatellite } from '../lib/icons.js'
+  import { iMenu, iClose, iPrefix, iPath, iGlobal, iClock, iTheme, iLang, iAbout, iRepo, iIssue, iChangelog, iNodes, iWhois, iProbe, iSatellite, iNet } from '../lib/icons.js'
   import { features } from '../lib/site.js'
 
   let counts = $derived(S.meta?.counts || {})
@@ -52,6 +52,12 @@
       <div><dt><Fa icon={iClock} /> {t('t_gen')}</dt><dd class="gen" title={genUtc(S.meta?.generated_ts)}>{genAgo(S.meta?.generated_ts)}</dd></div>
     </dl>
     <nav class="links">
+      {#if features.peeringdb}
+        <!-- IX 目录(/ixps): 整页导航 SEO 页, 与桌面 Sidebar 一致。 -->
+        <a class="lnk" href={S.lang === 'en' ? '/ixps?lang=en' : '/ixps'} onclick={close}>
+          <Fa icon={iNet} /> {t('nav_ix_dir')}
+        </a>
+      {/if}
       {#if features.geo}
         <!-- 国家目录(/networks): 整页导航, 非 SPA 路由。移动端入口, 与桌面 Sidebar 一致。 -->
         <a class="lnk" href={S.lang === 'en' ? '/networks?lang=en' : '/networks'} onclick={close}>

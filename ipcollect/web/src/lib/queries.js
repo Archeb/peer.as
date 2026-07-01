@@ -4,7 +4,10 @@ import { t } from './i18n.js'
 import { q, rpList, pathsFileFor, pathsearchFilesForOrigin, pathsearchFilesForOrigins,
   byoriginFilesForOrigin, byoriginFilesForOrigins, originCountsFiles,
   prefixesFilesForRange, irrFilesForRange,
-  assetSetFiles, assetSetFilesForKey, assetMemberFilesForKey, assetMemberOfFilesForKey, asnNeighFilesForAsn, ensureEngine } from './db.js'
+  assetSetFiles, assetSetFilesForKey, assetMemberFilesForKey, assetMemberOfFilesForKey, asnNeighFilesForAsn,
+  peeringdbFiles, peeringdbNetFilesForAsn, peeringdbNetixlanFilesForAsn, peeringdbNetixlanFilesForIx,
+  peeringdbNetfacFilesForAsn, peeringdbIxFilesForIx, peeringdbIxlanFilesForIx, peeringdbIxfacFilesForIx,
+  ensureEngine } from './db.js'
 import { resolveDns } from './dns.js'
 import { features } from './site.js'
 import { progressBegin, progressSet, progressFinish } from './progress.js'
@@ -406,6 +409,13 @@ export async function runAsSet(input) {
   S.asset = { input: key, loading: true }
   go('/asset/' + encodeURIComponent(key))
   S.msg = `as-set ${key} …`
+  // 本数据集无 IRR as-set(has_asset=false / 无 asset_set 分片)时: 直接空态, 绝不构造 read_parquet([])
+  // 空清单(DuckDB 会报 Binder Error)。与 loadMemberOf 的门控一致。
+  if (!S.meta?.has_asset || !assetSetFiles().length) {
+    S.asset = { input: key, unavailable: true }
+    S.msg = (S.lang === 'zh' ? `as-set ${key}：本数据集未包含 IRR as-set` : `as-set ${key}: IRR as-set data not available`)
+    return
+  }
   try {
     let row, candidates = null
     if (key.includes('::')) {              // 显式来源键 SOURCE::NAME
@@ -584,8 +594,50 @@ export async function showAsn(asn) {
   if (S.meta?.has_asset && S.asnView?.asn === asn && !S.asnView.error) {
     loadMemberOf('AS' + asn).then(ms => { if (S.asnView?.asn === asn) S.asnView = { ...S.asnView, memberOf: ms } })
   }
+  if (S.meta?.has_peeringdb && S.asnView?.asn === asn && !S.asnView.error) {
+    S.asnView = { ...S.asnView, peeringdb: { loading: true } }
+    loadPeeringdbForAsn(asn).then(p => {
+      if (S.asnView?.asn === asn) S.asnView = { ...S.asnView, peeringdb: p || { empty: true } }
+    }).catch(e => {
+      if (S.asnView?.asn === asn) S.asnView = { ...S.asnView, peeringdb: { error: e.message } }
+    })
+  }
   // 完整邻居已预计算(asn_neigh)-> 廉价, 自动加载(不再需要「按需」按钮; 旧数据无此列时仍由按钮触发全表扫)。
   if (S.meta?.has_asn_neigh && S.asnView?.asn === asn && !S.asnView.error) scanNeighbors(asn)
+}
+
+async function loadPeeringdbForAsn(asn) {
+  const netFiles = peeringdbNetFilesForAsn(asn)
+  const ixFiles = peeringdbNetixlanFilesForAsn(asn)
+  const facFiles = peeringdbNetfacFilesForAsn(asn)
+  const ixAll = peeringdbFiles('pdb_ix')
+  const ixlanAll = peeringdbFiles('pdb_ixlan')
+  const facAll = peeringdbFiles('pdb_fac')
+  let net = null, ix = [], fac = []
+  const tasks = []
+  if (netFiles.length) tasks.push(q(`SELECT * FROM ${rpList(netFiles)} WHERE asn=${asn} LIMIT 1`).then(r => { net = r[0] || null }))
+  if (ixFiles.length && ixAll.length && ixlanAll.length) tasks.push(q(`
+    SELECT n.*, ix.name AS ix_name, ix.city AS ix_city, ix.country AS ix_country, ix.region_continent AS ix_region,
+           ix.website AS ix_website, ix.url_stats AS ix_stats, l.name AS lan_name, l.rs_asn AS rs_asn
+    FROM ${rpList(ixFiles)} n
+    LEFT JOIN ${rpList(ixAll)} ix ON ix.ix_id=n.ix_id
+    LEFT JOIN ${rpList(ixlanAll)} l ON l.ixlan_id=n.ixlan_id
+    WHERE n.asn=${asn}
+    ORDER BY n.operational DESC, n.speed DESC, ix.name
+    LIMIT 800
+  `).then(r => { ix = r }))
+  if (facFiles.length && facAll.length) tasks.push(q(`
+    SELECT nf.*, f.name AS fac_name, f.org_name, f.region_continent, f.state, f.net_count, f.ix_count, f.carrier_count,
+           f.latitude, f.longitude, f.website AS fac_website
+    FROM ${rpList(facFiles)} nf
+    LEFT JOIN ${rpList(facAll)} f ON f.fac_id=nf.fac_id
+    WHERE nf.asn=${asn}
+    ORDER BY f.net_count DESC NULLS LAST, f.name
+    LIMIT 300
+  `).then(r => { fac = r }))
+  await Promise.all(tasks)
+  if (!net && !ix.length && !fac.length) return null
+  return { net, ix, fac }
 }
 // ── 邻居关系(三态: up=provider / peer / down=customer) ──────────────────────────────────
 const emptyRel = () => ({ up: [], peer: [], down: [] })
@@ -823,6 +875,94 @@ export function collapseProbe() {
 // 侧栏/移动菜单入口: 切到干净 trace 视图；NextTrace traceMap 深链走 /trace?nt=<id>。
 export function openTrace() { setView('trace') }
 
+// ── PeeringDB / IXP 浏览器 ───────────────────────────────────────
+// keepDetail: 从 ASN 详情面板内点 IX 时用 —— 左侧主内容切到 IXP 视图, 但右侧详情面板(当前 ASN)保留、
+// 不整页刷新、也不动 URL(URL 仍是被钉住的 /<asn>, 主区 IXP 为临时浏览面; 刷新回落到 ASN 详情)。移动端无
+// 左右分栏、详情为全屏浮层, 故 keepDetail 在窄屏降级为原「替换」行为(否则 IXP 会被全屏详情盖住看不见)。
+export async function openIxpBrowser(ixId = null, { keepDetail = false } = {}) {
+  const keep = keepDetail && !isMobileViewport()
+  if (!keep) closeDetailState()
+  S.view = 'routing'
+  S.mode = 'ixp'
+  Object.assign(S.filters, { cc: '', city: '', person: '', path: '', origin: '', ip: '' })
+  S.rows = []; S.dns = null; S.asset = null; S.msg = ''
+  const id = ixId == null ? null : Number(ixId)
+  if (!keep) go(id ? `/ixp/${id}` : '/ixp')
+  try { await ensureEngine() } catch { return }
+  await loadIxpList()   // 供空态「热门交换中心」快捷入口 + 顶栏搜索建议
+  // 列表侧栏已删: 无 id 时不再自动选中首个 IX, 展示空态引导(搜索框 / IX 目录)。
+  if (id) await selectIxp(id, { noUrl: keep })
+  else S.ixp = { ...S.ixp, selected: null, detail: null }
+}
+
+export async function loadIxpList() {
+  if (!S.meta?.has_peeringdb) {
+    S.ixp = { ...S.ixp, rows: [], loading: false, error: t('pdb_missing') }
+    return
+  }
+  if (S.ixp.rows?.length) return
+  const files = peeringdbFiles('pdb_ix')
+  if (!files.length) {
+    S.ixp = { ...S.ixp, rows: [], loading: false, error: t('pdb_missing') }
+    return
+  }
+  S.ixp = { ...S.ixp, loading: true, error: '' }
+  try {
+    const rows = await q(`SELECT ix_id, name, aka, name_long, city, country, region_continent, net_count, fac_count, proto_ipv6, website, url_stats
+      FROM ${rpList(files)} ORDER BY net_count DESC, name`)
+    S.ixp = { ...S.ixp, rows, loading: false, error: '' }
+  } catch (e) {
+    S.ixp = { ...S.ixp, rows: [], loading: false, error: e.message }
+  }
+}
+
+export async function selectIxp(ixId, { noUrl = false } = {}) {
+  const id = Number(ixId)
+  if (!id || !S.meta?.has_peeringdb) return
+  S.ixp = { ...S.ixp, selected: id, detail: { loading: true }, error: '' }
+  if (!noUrl && S.mode === 'ixp') go(`/ixp/${id}`)
+  const ixFiles = peeringdbIxFilesForIx(id)
+  const memberFiles = peeringdbNetixlanFilesForIx(id)
+  const ixlanFiles = peeringdbIxlanFilesForIx(id)
+  const pfxFiles = peeringdbFiles('pdb_ixpfx')
+  const netFiles = peeringdbFiles('pdb_net')
+  const ixfacFiles = peeringdbIxfacFilesForIx(id)
+  const facFiles = peeringdbFiles('pdb_fac')
+  try {
+    const ix = ixFiles.length ? (await q(`SELECT * FROM ${rpList(ixFiles)} WHERE ix_id=${id} LIMIT 1`))[0] : null
+    const ixlans = ixlanFiles.length ? await q(`SELECT * FROM ${rpList(ixlanFiles)} WHERE ix_id=${id} ORDER BY ixlan_id`) : []
+    const prefixes = (ixlanFiles.length && pfxFiles.length) ? await q(`
+      SELECT p.*, l.name AS lan_name
+      FROM ${rpList(pfxFiles)} p
+      JOIN ${rpList(ixlanFiles)} l ON l.ixlan_id=p.ixlan_id
+      WHERE l.ix_id=${id}
+      ORDER BY p.protocol, p.prefix
+    `) : []
+    const members = (memberFiles.length && netFiles.length && ixlanFiles.length) ? await q(`
+      SELECT n.asn, net.name AS net_name, net.info_type, net.info_traffic, n.speed, n.ipaddr4, n.ipaddr6,
+             n.is_rs_peer, n.bfd_support, n.operational, n.updated, l.name AS lan_name, l.rs_asn
+      FROM ${rpList(memberFiles)} n
+      LEFT JOIN ${rpList(netFiles)} net ON net.asn=n.asn
+      LEFT JOIN ${rpList(ixlanFiles)} l ON l.ixlan_id=n.ixlan_id
+      WHERE n.ix_id=${id}
+      ORDER BY n.operational DESC, n.speed DESC, n.asn
+      LIMIT 3000
+    `) : []
+    const facilities = (ixfacFiles.length && facFiles.length) ? await q(`
+      SELECT xf.fac_id, COALESCE(f.name, xf.name) AS fac_name, COALESCE(f.city, xf.city) AS city,
+             COALESCE(f.country, xf.country) AS country, f.state, f.org_name, f.net_count, f.ix_count,
+             f.carrier_count, f.latitude, f.longitude
+      FROM ${rpList(ixfacFiles)} xf
+      LEFT JOIN ${rpList(facFiles)} f ON f.fac_id=xf.fac_id
+      WHERE xf.ix_id=${id}
+      ORDER BY f.net_count DESC NULLS LAST, fac_name
+    `) : []
+    S.ixp = { ...S.ixp, selected: id, detail: { ix, ixlans, prefixes, members, facilities, loading: false }, error: '' }
+  } catch (e) {
+    S.ixp = { ...S.ixp, detail: { loading: false, error: e.message }, error: '' }
+  }
+}
+
 // ── 结果表分页 + 导出 ─────────────────────────────────────────────
 // 翻页: 调 runSearch(true) 保留 S.page; OFFSET=page*limit 重查(复用整套搜索逻辑与 _best/排序后处理)。
 export function gotoPage(delta) {
@@ -893,6 +1033,8 @@ export function setView(v) {
     S.view = 'trace'                                       // 全球路由跟踪(不依赖 DuckDB 引擎); 只有 /trace 一个路径
     S.trace = { target: '' }
     go('/trace')
+  } else if (v === 'ixp') {
+    openIxpBrowser()
   } else {
     if (v === S.view) return
     S.view = 'routing'
@@ -956,6 +1098,8 @@ async function openPrefixByString(s) {
 // 只需覆盖剩余的「对象/视图」路由。名称搜索不占路径(走 /?q=), 故 name/text 一律视为未知 -> 404。
 function isKnownRoute(path) {
   if (path === 'advanced') return true                                  // 路由分析空落地页
+  if (features.peeringdb && /^ixp(\/\d+)?$/.test(path)) return true      // PeeringDB IXP 浏览器
+  if (features.peeringdb && /^ixps(\/[A-Za-z]{2}(\/\d{1,4})?)?$/.test(path)) return true  // IX 目录(SSR) /ixps[/<cc>[/<page>]]
   if (/^networks(\/[A-Za-z]{2}(\/\d{1,4})?)?$/.test(path)) return true  // 国家目录(SSR) /networks[/<cc>[/<page>]]
   if (/^asset\/.+/.test(path)) return true                             // /asset/<as-set 键>
   if (/^dns\/.+/.test(path)) return true                              // /dns/<域名>
@@ -1017,7 +1161,10 @@ export async function applyRoute({ initial = false } = {}) {
     }
     // 路由分析需 DuckDB 引擎: 懒加载(首次), 就绪后再跑下面的 runSearch/runDns/runAsSet。失败则 S.fatal 已置, 直接退出。
     try { await ensureEngine() } catch { return }
-    if (path === 'advanced') {                     // /advanced -> 路由分析空落地页(peeras 让出 / 给 WHOIS 首页后的去处)
+    if (features.peeringdb && (path === 'ixp' || path.startsWith('ixp/'))) {
+      const id = path.startsWith('ixp/') ? Number(path.slice(4)) : null
+      await openIxpBrowser(id)
+    } else if (path === 'advanced') {              // /advanced -> 路由分析空落地页(peeras 让出 / 给 WHOIS 首页后的去处)
       closeDetailState()
       await runSearch()
     } else if (path.startsWith('asset/')) {        // /asset/<as-set 键> -> 左侧嵌套列表

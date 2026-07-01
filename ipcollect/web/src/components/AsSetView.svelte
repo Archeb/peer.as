@@ -29,6 +29,8 @@
     <div class="aload"><Fa icon={iSpinner} spin /> {t('querying')}</div>
   {:else if A?.error}
     <div class="aload err">{A.error}</div>
+  {:else if A?.unavailable}
+    <div class="empty">{t('asset_unavailable')}</div>
   {:else if A?.notfound}
     <div class="empty">{t('asset_notfound').replace('{k}', A.input)}</div>
   {:else if A?.key}

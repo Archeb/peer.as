@@ -76,6 +76,14 @@ export function regionName(cc) {
 }
 export const ccLabel = cc => `${regionName(cc)} (${cc})`
 
+// 国旗图标 URL(deploy/og-icons/flags 的 4x3 PNG, 已拷到 public/flags, 文件名小写 CC)。
+// TW 不出旗(与 og-renderer FLAG_HIDE 及 CC_OVERRIDE 的表述口径一致); 非法/两位以外一律空。
+export function flagSrc(cc) {
+  cc = String(cc || '').trim().toLowerCase()
+  if (!/^[a-z]{2}$/.test(cc) || cc === 'tw') return ''
+  return `flags/${cc}.png`
+}
+
 // 低可见阈值按 family 取(v6 全网 peer 数远少, 自有 dfz_ref_v6)。
 export const lowCutFor = v6 => Math.max(3, 0.2 * ((v6 ? (S.meta && S.meta.dfz_ref_v6) : (S.meta && S.meta.dfz_ref)) || 1))
 export const lowCut = () => lowCutFor(false)
@@ -211,32 +219,64 @@ export function classifyQuery(s) {
   return { kind: 'name', q: s }   // 其余(含字母, 无点/冒号/斜杠) -> 按 AS 名称搜索, 反推 origin ASN
 }
 
-// AS 名称 -> origin ASN 反查。索引(asn -> 小写名)由全量 asnames.json + 注册表(meta.asn_names, 含中文运营商名)
-// 合并而成, 同一 ASN 的多个名都收录(故中/英名都能命中); 按 meta/asnNames 条目数做轻量缓存键, 变了才重建。
-let _nidx = null, _nidxKey = ''
-function nameIndex() {
-  const full = S.asnNames || {}, reg = (S.meta && S.meta.asn_names) || {}, regEn = (S.meta && S.meta.asn_names_en) || {}
-  const key = Object.keys(full).length + ':' + Object.keys(reg).length + ':' + Object.keys(regEn).length
-  if (_nidx && _nidxKey === key) return _nidx
-  const arr = []
-  const add = (k, name) => { if (!name) return; const a = +k; if (a) arr.push({ asn: a, nl: String(name).toLowerCase() }) }
-  for (const k in reg) add(k, reg[k])
-  for (const k in regEn) add(k, regEn[k])     // 英文别名(CERNET/CMIN2…)也可搜
-  for (const k in full) add(k, full[k])
-  _nidx = arr; _nidxKey = key; return arr
+// AS 名称 -> origin ASN 反查。索引由全量 asnames.json + 注册表(meta.asn_names 中文 / asn_names_en 英文别名)
+// 合并而成(同一 ASN 的多个名都收录, 中/英名都能命中)。
+//
+// 性能: 索引存为**两条并行数组**(_idxNames 小写名 + _idxAsns 对应 ASN), 而非对象数组 ——
+//   ~9 万条, 热循环里按下标取值(无解构/无对象分配), indexOf + charCodeAt(不用正则), 命中按 rank 分桶
+//   (只有 0/1/2 三档, 免全量比较器排序)。索引按数据条目数缓存, 变了才重建; 首建可用 warmAsnNameIndex()
+//   在数据加载后的空闲期预热, 避免落在首次按键上。
+// 原始(非代理)数据源: 由 db.js 在数据加载后交入(setAsnNameData)。
+// **关键**: S.asnNames / S.meta.* 是 Svelte $state 深代理, 对其 Object.keys / for-in 会逐键触发代理 trap,
+// 9 万键足以卡 1s+。故建索引只迭代 db 交入的明文对象(JSON.parse 原件, 无代理), 且缓存判定用**引用相等**
+// (O(1), 绝不再 Object.keys)。单键查询(asnName 等)仍走 S.*(单次 get, 廉价)。
+let _srcFull = null, _srcReg = null, _srcRegEn = null
+let _idxNames = null, _idxAsns = null, _bFull = null, _bReg = null, _bRegEn = null
+// db.js 数据到位后调用, 传入原始明文对象(asnames.json 全量 + meta.asn_names / asn_names_en)。
+export function setAsnNameData({ full, reg, regEn } = {}) {
+  if (full !== undefined) _srcFull = full || null
+  if (reg !== undefined) _srcReg = reg || null
+  if (regEn !== undefined) _srcRegEn = regEn || null
+  _idxNames = null   // 源已更新 -> 失效, 下次 buildIndex 重建
 }
+function buildIndex() {
+  const full = _srcFull || S.asnNames || {}
+  const reg = _srcReg || (S.meta && S.meta.asn_names) || {}
+  const regEn = _srcRegEn || (S.meta && S.meta.asn_names_en) || {}
+  if (_idxNames && full === _bFull && reg === _bReg && regEn === _bRegEn) return   // 引用一致 = 已建好, O(1)
+  const names = [], asns = []
+  const add = obj => { for (const k in obj) { const name = obj[k]; if (!name) continue; const a = +k; if (!a) continue; asns.push(a); names.push(String(name).toLowerCase()) } }
+  add(reg); add(regEn); add(full)
+  _idxNames = names; _idxAsns = asns; _bFull = full; _bReg = reg; _bRegEn = regEn
+}
+// 数据加载后调用: 在空闲期把索引建好, 让首次搜索也是热路径(不阻塞、不卡首键)。
+export function warmAsnNameIndex() { try { buildIndex() } catch { /* 数据未就绪, 之后查询时会再建 */ } }
+
+// prev 字符是否「词内」(字母/数字/下划线) —— 等价旧的 !/\W/, 但免正则(热循环里快很多)。
+function isWordChar(c) { return (c >= 48 && c <= 57) || (c >= 97 && c <= 122) || (c >= 65 && c <= 90) || c === 95 }
+const _numAsc = (a, b) => a - b
 // 返回 { asns:[origin...], more } : 子串(忽略大小写)命中, 按 精确=0 / 词首=1 / 子串=2 排序, 同 ASN 去重, 截断到 cap。
 export function asnsMatchingName(query, cap = 200) {
   const ql = (query || '').trim().toLowerCase()
   if (!ql) return { asns: [], more: false }
-  const best = new Map()
-  for (const { asn, nl } of nameIndex()) {
-    const i = nl.indexOf(ql); if (i < 0) continue
-    const rank = nl === ql ? 0 : (i === 0 || /\W/.test(nl[i - 1]) ? 1 : 2)
-    const prev = best.get(asn); if (prev == null || rank < prev) best.set(asn, rank)
+  buildIndex()
+  const names = _idxNames, asns = _idxAsns, N = names.length, qlen = ql.length
+  const best = new Map()               // asn -> 最优 rank(去重: 同 ASN 多名只留最好那次)
+  for (let i = 0; i < N; i++) {
+    const nl = names[i]
+    const idx = nl.indexOf(ql)
+    if (idx < 0) continue
+    const rank = idx === 0 ? (nl.length === qlen ? 0 : 1) : (isWordChar(nl.charCodeAt(idx - 1)) ? 2 : 1)
+    const asn = asns[i]
+    const prev = best.get(asn)
+    if (prev == null || rank < prev) best.set(asn, rank)
   }
-  const hits = [...best.entries()].sort((a, b) => a[1] - b[1] || a[0] - b[0])
-  return { asns: hits.slice(0, cap).map(h => h[0]), more: hits.length > cap }
+  // rank 只有 0/1/2 -> 桶排序(桶内按 asn 升序), 免对全部命中跑比较器排序。
+  const b0 = [], b1 = [], b2 = []
+  for (const [asn, rank] of best) (rank === 0 ? b0 : rank === 1 ? b1 : b2).push(asn)
+  b0.sort(_numAsc); b1.sort(_numAsc); b2.sort(_numAsc)
+  const all = b0.concat(b1, b2)
+  return { asns: all.slice(0, cap), more: all.length > cap }
 }
 
 export function parseSeq(str) {

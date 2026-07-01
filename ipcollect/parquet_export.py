@@ -24,7 +24,7 @@ import tempfile
 import time
 from pathlib import Path
 
-from . import asset, bgp, geoip, irr, mrt, profile, rpki, store, util
+from . import asset, bgp, geoip, irr, mrt, peeringdb, profile, rpki, store, util
 
 
 def _subtract(s: int, e: int, holes: list) -> list[tuple]:
@@ -106,7 +106,12 @@ def copy_web(out_dir: str = "dist") -> int:
     n_files = 0
     for p in webdist.rglob("*"):
         if p.is_file():
-            dst = out / p.relative_to(webdist)
+            rel = p.relative_to(webdist)
+            # web/public/data 在开发机是本地数据 symlink。前端同步绝不能覆盖已发布数据目录;
+            # 数据只由 export-parquet / --data 流水线维护。
+            if rel.parts and rel.parts[0] == "data":
+                continue
+            dst = out / rel
             dst.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(p, dst); n_files += 1
     return n_files
@@ -655,6 +660,16 @@ def export(cfg: dict, con, out_dir: str = "dist") -> dict:
         json.dumps(asnorg, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
     util.log(f"  asnames.json: {len(asnames)} 名; asnorg.json: {len(asnorg)} org; persons: {len(persons_meta)}")
 
+    # ── PeeringDB / IXP 画像数据: fail-safe, 缺数据只关闭前端入口, 不阻断主数据导出。 ──
+    try:
+        peeringdb_meta = peeringdb.export(con, cfg, pq)
+        has_peeringdb = bool(peeringdb_meta.get("enabled"))
+    except Exception as e:  # noqa
+        util.log(f"  ! PeeringDB 导出失败, 降级关闭 IXP 视图: {e}", err=True)
+        shutil.rmtree(pq / "peeringdb", ignore_errors=True)
+        peeringdb_meta = {"enabled": False}
+        has_peeringdb = False
+
     # 文件清单 + 区间索引(前端 HTTP 不能 glob)
     def _rel(sub):
         d = pq / sub
@@ -741,6 +756,20 @@ def export(cfg: dict, con, out_dir: str = "dist") -> dict:
         files["asn_neigh_key"] = _num_index(files["asn_neigh"], "asn")
     if has_origin_counts:   # 每 origin 通告前缀数(v4/v6) 预聚合, 单小文件按 origin 排序
         files["origin_counts"] = _rel("origin_counts")
+    if has_peeringdb:
+        for name in [
+            "pdb_net", "pdb_ix", "pdb_ixlan", "pdb_ixpfx", "pdb_fac",
+            "pdb_netixlan_asn", "pdb_netixlan_ix", "pdb_netfac_asn", "pdb_ixfac", "pdb_as_set",
+        ]:
+            files[name] = _rel(f"peeringdb/{name}")
+        files["pdb_net_asn"] = _num_index(files["pdb_net"], "asn")
+        files["pdb_ix_key"] = _num_index(files["pdb_ix"], "ix_id")
+        files["pdb_ixlan_ix"] = _num_index(files["pdb_ixlan"], "ix_id")
+        files["pdb_ixpfx_ixlan"] = _num_index(files["pdb_ixpfx"], "ixlan_id")
+        files["pdb_netixlan_asn_key"] = _num_index(files["pdb_netixlan_asn"], "asn")
+        files["pdb_netixlan_ix_key"] = _num_index(files["pdb_netixlan_ix"], "ix_id")
+        files["pdb_netfac_asn_key"] = _num_index(files["pdb_netfac_asn"], "asn")
+        files["pdb_ixfac_ix_key"] = _num_index(files["pdb_ixfac"], "ix_id")
 
     # 国家清单(union 两 family) + 双语名(country_dim) + 各国城市清单(侧栏导航)。
     # carve 把**所有**国家都切到城市级, 故城市下拉对每个国家都构建(不再限定焦点国)。
@@ -815,6 +844,8 @@ def export(cfg: dict, con, out_dir: str = "dist") -> dict:
         # 门控: 缺标志(旧数据)时前端回退用 pathsearch + 运行时聚合, 行为不变。
         "has_byorigin": all(f"byorigin{fam_results[f]['suffix']}" in files and files[f"byorigin{fam_results[f]['suffix']}"] for f in families),
         "has_origin_counts": has_origin_counts,
+        "has_peeringdb": has_peeringdb,
+        "peeringdb": (peeringdb_meta if has_peeringdb else None),
         "files": files,
         "generated_ts": now,
         "generated_str": time.strftime("%Y-%m-%d %H:%M", time.localtime(now)),
@@ -849,6 +880,7 @@ def export(cfg: dict, con, out_dir: str = "dist") -> dict:
     seo_asns: list = []
     seo_assets: list = []
     seo_networks: list = []   # [{cc,n,...}] 供 sitemap 生成 /networks/<cc>(+分页)
+    seo_ixps: list = []       # [{cc,n,...}] 供 sitemap 生成 /ixps/<cc>(+分页)
     try:
         seo = data / "seo"
         seo.mkdir(parents=True, exist_ok=True)
@@ -958,6 +990,32 @@ def export(cfg: dict, con, out_dir: str = "dist") -> dict:
                 json.dumps({str(a): cc for a, cc in asn_cc.items()},
                            ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
             util.log(f"  SEO 数据: asn_cc.json {len(asn_cc)} 条")
+        # ixps.json: 按国家分流的 IX 索引(SEO 引导页 /ixps 用) —— IX 的注册国取自 pdb_ix.country。
+        # 每国按成员数(net_count)降序; 条目内嵌名称/城市(worker 无 parquet 可读, 故直接带上)。dn42 无 peeringdb -> 跳过。
+        if has_peeringdb:
+            ix_rows = con.execute(
+                f"""SELECT ix_id, name, city, COALESCE(country,'') cc, net_count
+                    FROM read_parquet('{pq}/peeringdb/pdb_ix/*.parquet')
+                    WHERE ix_id IS NOT NULL
+                    ORDER BY net_count DESC NULLS LAST, name""").fetchall()
+            by_cc_ix: dict = {}
+            for ix_id, nm, city, cc, nets in ix_rows:
+                cc = (cc or "").strip().upper()
+                if len(cc) != 2 or not cc.isalpha():
+                    continue
+                # 条目 = [ix_id, name, city, net_count](与 worker renderIxCountry 的解构一致)
+                by_cc_ix.setdefault(cc, []).append(
+                    [int(ix_id), nm or f"IX {ix_id}", city or "", int(nets or 0)])
+            if by_cc_ix:
+                countries_ix = sorted(
+                    ({"cc": cc, "n": len(v),
+                      "zh": country_names.get(cc, cc), "en": country_names_en.get(cc, cc)}
+                     for cc, v in by_cc_ix.items()), key=lambda e: -e["n"])
+                (seo / "ixps.json").write_text(
+                    json.dumps({"countries": countries_ix, "ixps": by_cc_ix},
+                               ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+                seo_ixps = countries_ix
+                util.log(f"  SEO 数据: ixps.json {len(countries_ix)} 国 / {sum(len(v) for v in by_cc_ix.values())} IX 分流")
         util.log(f"  SEO 数据: asn.json {len(seo_asns)} 条; asset.json {len(seo_assets)} 条")
     except Exception as e:  # noqa  SEO 数据失败只降级, 绝不让导出失败
         util.log(f"  ! SEO 数据导出失败, 降级(SEO 退化为纯前端): {e}", err=True)
@@ -966,7 +1024,7 @@ def export(cfg: dict, con, out_dir: str = "dist") -> dict:
     # (旧的 /c/<cc>.html 国家落地页已废弃 —— 它是与 SPA 脱节的死胡同页, 改由 _worker.js 同壳 SSR 接管。)
     try:
         from . import ssg
-        n_ssg = ssg.generate(out, meta, seo_asns, seo_assets, seo_networks)
+        n_ssg = ssg.generate(out, meta, seo_asns, seo_assets, seo_networks, seo_ixps)
     except Exception as e:  # noqa  sitemap 失败只降级
         util.log(f"  ! sitemap 生成失败, 降级: {e}", err=True)
         n_ssg = 0

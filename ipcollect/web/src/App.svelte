@@ -18,6 +18,7 @@
   import NotFound from './components/NotFound.svelte'
   import DnsView from './components/DnsView.svelte'
   import AsSetView from './components/AsSetView.svelte'
+  import IxpView from './components/IxpView.svelte'
   import InsightDrawer from './components/InsightDrawer.svelte'
   import AboutModal from './components/AboutModal.svelte'
   import ChangelogModal from './components/ChangelogModal.svelte'
@@ -45,6 +46,7 @@
       return t('page_title')                                        // 首页(去掉 WHOIS)
     }
     if (S.view === 'trace') return `${t('nav_trace')} · ${B}`        // 环球网测落地页
+    if (S.mode === 'ixp') return `${t('nav_ixp')} · ${B}`
     if (S.view === 'routing') return `${t('nav_routing')} · ${B}`    // 路由分析落地页
     return t('page_title')
   }
@@ -164,6 +166,8 @@
           <div class="fatal"><b>×</b> {S.fatal}</div>
         {:else if S.loading}
           <div class="boot"><Fa icon={iSpinner} spin /> <span>{S.msg || t('loading')}</span></div>
+        {:else if S.mode === 'ixp'}
+          <IxpView />
         {:else if S.mode === 'dns'}
           <DnsView />
         {:else if S.mode === 'asset'}
