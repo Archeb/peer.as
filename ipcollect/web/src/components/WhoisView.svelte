@@ -11,10 +11,11 @@
   import { features } from '../lib/site.js'
   import { regionName, asnName } from '../lib/bgp.js'
   import { fetchTrace, ccLatLon } from '../lib/geo.js'
-  import { iSearch, iArrowR, iClose, iNodes } from '../lib/icons.js'
+  import { iSearch, iClose, iNodes } from '../lib/icons.js'
   import { tapLogo } from '../lib/ui.js'
   import MobileBar from './MobileBar.svelte'
-  import Whois from './Whois.svelte'
+  import SearchSuggest from './SearchSuggest.svelte'
+  import DetailBody from './DetailBody.svelte'
   import Doodle from './Doodle.svelte'
   import SelfProbe from './SelfProbe.svelte'
   import logoBig from '../assets/peeras-ba-hero.png'
@@ -69,40 +70,17 @@
   $effect(() => { box = S.whois.input || '' })
 
   let inputEl
-  $effect(() => { inputEl?.focus() })
 
-  // 已解析 record 的类型(据 S.whois.kind/key, 区分 v4/v6/CIDR), 用于卷宗色脊 + 类型徽标。
-  let rec = $derived.by(() => {
-    const { kind, key } = S.whois
-    if (kind === 'autnum') return { cls: 'asn', label: t('wv_t_asn') }
-    if (kind === 'ip') {
-      const v6 = String(key).includes(':'), cidr = String(key).includes('/')
-      return { cls: v6 ? 'ip6' : 'ip4', label: cidr ? t('wv_t_cidr') : (v6 ? t('wv_t_ipv6') : t('wv_t_ipv4')) }
-    }
-    if (kind === 'domain') return { cls: 'domain', label: t('wv_t_domain') }
-    return { cls: 'none', label: t('wv_t_none') }
-  })
-  // 子域名提示: RDAP 站把域名缩到可注册根(key) 查询时, 告知实际查询对象。
-  let rootNote = $derived(
-    S.whois.kind === 'domain' && features.rdapWhois && S.whois.key &&
-    S.whois.key !== (S.whois.input || '').toLowerCase().replace(/\.$/, '')
-  )
-
-  // 「查看更多信息」标签: 按对象类型给出路由分析里能提供的更深内容。
-  let moreLabel = $derived.by(() => {
-    const { kind, key } = S.whois
-    if (kind === 'autnum') return t('wv_more_asn')
-    if (kind === 'domain') return t('wv_more_domain')
-    if (kind === 'ip') return String(key).includes('/') ? t('wv_more_prefix') : t('wv_more_ip')
-    return ''
-  })
+  // 搜索建议下拉(与顶栏 SearchBox 共用 SearchSuggest): 本地开关 + 组件引用(转发键盘)。
+  let suggestOpen = $state(false)
+  let suggest = $state()
 
   // 「高级搜索」开 -> 任何查询直接进路由分析; 否则简洁 WHOIS(runWhois 内部仍会把 as-set/名称等非 WHOIS 对象转路由)。
   function run(x) { S.advWhois ? openInRouting(x) : runWhois(x) }
   function submit(e) { e?.preventDefault(); run(box) }
   function pick(x) { box = x; run(x) }
   // 清除: 清空输入并回到 WHOIS 首页(结果收起 + 地球淡入丝滑返回)
-  function clearBox() { box = ''; goHome(); inputEl?.focus() }
+  function clearBox() { box = ''; goHome(); inputEl?.focus(); suggestOpen = true }
   function persistAdv() { try { localStorage.setItem('ipc-adv-whois', S.advWhois ? '1' : '0') } catch (e) { /* 隐私模式忽略 */ } }
 </script>
 
@@ -126,7 +104,6 @@
       </div>
 
       <form class="console" onsubmit={submit}>
-        <span class="prompt" aria-hidden="true">▸</span>
         <!-- textarea(非 input): 彻底避免 1Password 等把它当密码框。rows=1 + 拦 Enter, 行为同单行 input -->
         <textarea
           bind:this={inputEl}
@@ -137,8 +114,11 @@
           placeholder={t('wv_ph')}
           spellcheck="false" autocapitalize="off" autocorrect="off" autocomplete="off"
           aria-label="WHOIS" data-1p-ignore data-lpignore="true"
-          onkeydown={(e) => { if (e.key === 'Enter') submit(e) }}
-          oninput={() => { if (box.includes('\n')) box = box.replace(/\n/g, '') }}
+          role="combobox" aria-expanded={suggestOpen} aria-controls="sb-drop" aria-autocomplete="list"
+          onfocus={() => (suggestOpen = true)}
+          onblur={() => setTimeout(() => (suggestOpen = false), 150)}
+          onkeydown={(e) => suggest?.keydown(e)}
+          oninput={() => { suggestOpen = true; if (box.includes('\n')) box = box.replace(/\n/g, '') }}
         ></textarea>
         {#if box}
           <button type="button" class="clear" onclick={clearBox} aria-label="清除" title="清除"><Fa icon={iClose} /></button>
@@ -152,6 +132,8 @@
           </button>
         {/if}
         <button type="submit" class="run"><Fa icon={iSearch} /> <span>{t('wv_go')}</span></button>
+
+        <SearchSuggest bind:this={suggest} bind:value={box} bind:open={suggestOpen} onenter={() => run(box)} variant="console" />
       </form>
 
       <!-- 「你的接入」自助探测卡片: 仅首页(出结果时随 hero 一并收起)。
@@ -162,24 +144,11 @@
 
       <!-- 国家目录(/networks)入口不放第一屏 hero; 改由左侧 Sidebar footer 承载(见 Sidebar.svelte)。 -->
 
-      {#if S.whois.kind}
-        <section class="dossier" data-t={rec.cls}>
-          <div class="spine"><span class="spine-lbl">{rec.label}</span></div>
-          <div class="doc">
-            <div class="dochead">
-              <span class="reckey">{S.whois.input}</span>
-              <span class="tbadge" data-t={rec.cls}>{rec.label}</span>
-            </div>
-            {#if rootNote}
-              <div class="subnote">{t('wv_root_note')} <b>{S.whois.key}</b></div>
-            {/if}
-            <Whois kind={S.whois.kind} rkey={S.whois.key} />
-            {#if moreLabel}
-              <button class="more" onclick={() => openInRouting(S.whois.input)}>
-                <span>{moreLabel}</span> <Fa icon={iArrowR} />
-              </button>
-            {/if}
-          </div>
+      {#if S.detailKind}
+        <!-- 查询详情: 内联复用 InsightDrawer 那套完整正文(DetailBody), 显示所有信息(ASN 含
+             PeeringDB/邻居/前缀; 前缀含 PathGraph/IRR/RPKI/paths; 域名详情), 不再是浅层 WHOIS 卷宗。 -->
+        <section class="detail-inline">
+          <DetailBody />
         </section>
       {/if}
     </div>
@@ -301,6 +270,7 @@
 
   /* ── 命令行输入 ── */
   .console {
+    position: relative;                 /* 建议下拉 .drop 绝对定位锚点 */
     display: flex; align-items: center; gap: 10px; margin-top: 6px;
     padding: 0 8px 0 16px; height: 58px;
     background: var(--inbg); border: 1px solid var(--line); border-radius: 14px;
@@ -308,8 +278,6 @@
     transition: border-color .15s, box-shadow .15s;
   }
   .console:focus-within { border-color: var(--accent); box-shadow: 0 0 0 4px var(--accent-dim), 0 14px 40px -22px rgba(0,0,0,.55); }
-  .prompt { color: var(--accent); font: 700 16px var(--mono); animation: blink 1.25s step-end infinite; user-select: none; }
-  @keyframes blink { 0%,55% { opacity: 1 } 56%,100% { opacity: .25 } }
   /* textarea 当单行用: 固定一行高、不换行、无 resize 拖拽角、无滚动条 */
   .cmd {
     flex: 1; min-width: 0; border: 0; outline: 0; background: transparent;
@@ -340,22 +308,6 @@
   .clear:hover { color: var(--fg); background: var(--alt); border-color: var(--line); }
   .clear :global(svg) { width: 13px; }
 
-  /* ── 类型徽标(按 data-t 着色) ── 用 sans: 中文(前缀/域名)在 mono 下难看 ── */
-  .tbadge {
-    flex: 0 0 auto; font: 700 11px var(--sans); letter-spacing: .06em; text-transform: uppercase;
-    padding: 4px 9px; border-radius: 7px; white-space: nowrap;
-    color: var(--tc, var(--muted));
-    background: color-mix(in srgb, var(--tc, var(--muted)) 14%, transparent);
-    border: 1px solid color-mix(in srgb, var(--tc, var(--muted)) 32%, transparent);
-  }
-  [data-t='asn']    { --tc: var(--accent); }
-  [data-t='ip4']    { --tc: #3b82f6; }
-  [data-t='ip6']    { --tc: #8b5cf6; }
-  [data-t='cidr']   { --tc: #0ea5e9; }
-  [data-t='domain'] { --tc: var(--signal); }
-  [data-t='bad']    { --tc: #ef4444; }
-  [data-t='none']   { --tc: var(--muted); }
-
   /* 「专业版」开关: 命令行内、查询按钮左侧的图标按钮。一个图标表激活/非激活 ——
      灰=关, accent(亮+淡底)=开。状态记忆于 localStorage。 */
   .adv {
@@ -369,48 +321,12 @@
   .adv:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--accent-dim); }
   .adv :global(svg) { width: 15px; }
 
-  /* ── record 卷宗 ── */
-  .dossier {
-    position: relative; margin-top: 26px; display: flex; align-items: stretch;
-    background: var(--panel); border: 1px solid var(--line); border-radius: 16px; overflow: hidden;
+  /* ── 查询详情(内联复用 DetailBody) ── 薄面板边框 + 内边距, 不再有色脊/类型徽标 ── */
+  .detail-inline {
+    margin-bottom: 26px; padding: 20px 22px 24px; text-align: left;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 16px;
     box-shadow: 0 24px 60px -34px rgba(0,0,0,.6);
   }
-  /* 蓝图式四角刻线 */
-  .dossier::before, .dossier::after {
-    content: ''; position: absolute; width: 14px; height: 14px; pointer-events: none;
-    border-color: color-mix(in srgb, var(--tc, var(--accent)) 55%, transparent); opacity: .7;
-  }
-  .dossier::before { top: 9px; right: 9px; border-top: 2px solid; border-right: 2px solid; border-radius: 0 5px 0 0; }
-  .dossier::after { bottom: 9px; right: 9px; border-bottom: 2px solid; border-right: 2px solid; border-radius: 0 0 5px 0; }
-  /* 左侧色脊: 类型色竖条 + 竖排标签 */
-  .spine {
-    flex: 0 0 46px; display: flex; align-items: center; justify-content: center;
-    background:
-      linear-gradient(180deg, color-mix(in srgb, var(--tc, var(--accent)) 22%, transparent), color-mix(in srgb, var(--tc, var(--accent)) 8%, transparent));
-    border-right: 1px solid color-mix(in srgb, var(--tc, var(--accent)) 30%, transparent);
-  }
-  /* 竖排标签: 不旋转(rotate(180) 会上下颠倒); 用 sans(中文不走 mono); 竖排上下行距用 .14em */
-  .spine-lbl {
-    writing-mode: vertical-rl; text-orientation: mixed;
-    font: 700 11px var(--sans); letter-spacing: .14em; text-transform: uppercase;
-    color: var(--tc, var(--accent));
-  }
-  .doc { flex: 1; min-width: 0; padding: 20px 22px 22px; }
-  .dochead { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
-  .reckey { font: 700 20px var(--mono); letter-spacing: -.01em; color: var(--fg); word-break: break-all; }
-  .subnote { margin: 8px 0 2px; font-size: 11.5px; color: var(--muted); line-height: 1.5; }
-  .subnote b { color: var(--link); font-family: var(--mono); font-weight: 600; word-break: break-all; }
-
-  /* 「查看更多信息」: 跳到路由分析的完整详情(ASN 邻居/关系、前缀 RPKI/IRR、域名 DNS)。 */
-  .more {
-    display: inline-flex; align-items: center; gap: 8px; margin-top: 18px;
-    background: var(--accent-dim); color: var(--accent);
-    border: 1px solid color-mix(in srgb, var(--accent) 34%, transparent); border-radius: 9px;
-    padding: 9px 14px; font: 600 12.5px var(--sans); cursor: pointer; transition: all .14s; text-align: left;
-  }
-  .more:hover { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
-  .more :global(svg) { width: 12px; transition: transform .14s; }
-  .more:hover :global(svg) { transform: translateX(3px); }
 
   @media (max-width: 820px) {
     /* 底部 + 左右安全区: 避开 iOS/安卓底栏与横屏刘海 */
@@ -418,15 +334,10 @@
     /* 居中沿用桌面同一套(.scroll 的 safe center): 卡少时居中, 单列过高自动退回顶对齐。 */
     /* 移动端: spwrap 常显(露出 SelfProbe 里的「摊开」按钮); 卡堆默认隐藏由 SelfProbe 内部(.stage)控制。 */
     .console { flex-wrap: wrap; height: auto; padding: 10px 12px; gap: 8px 10px; }
-    .prompt { order: 1; }
-    .cmd { order: 2; flex: 1 1 auto; min-width: 0; height: 34px; line-height: 34px; font-size: 16px; }  /* 与 ▸ 同行, 填满本行剩余宽度 */
-    .clear { order: 2; }                                                              /* 与 ▸/输入同行, 在其右 */
+    .cmd { order: 2; flex: 1 1 auto; min-width: 0; height: 34px; line-height: 34px; font-size: 16px; }  /* 填满本行剩余宽度 */
+    .clear { order: 2; }                                                              /* 与输入同行, 在其右 */
     .adv { order: 2; }                                                                /* 「专业版」与搜索框同一行 */
     .run { order: 3; flex: 1 1 100%; justify-content: center; height: 40px; }          /* 整行换到下一行 */
-    /* 卷宗: 色脊转为顶部横条 */
-    .dossier { flex-direction: column; }
-    .spine { flex: 0 0 auto; height: 34px; width: 100%; border-right: 0; border-bottom: 1px solid color-mix(in srgb, var(--tc, var(--accent)) 30%, transparent); }
-    .spine-lbl { writing-mode: horizontal-tb; transform: none; }
-    .reckey { font-size: 17px; }
+    .detail-inline { padding: 16px 14px 18px; border-radius: 12px; }
   }
 </style>

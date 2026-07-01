@@ -473,7 +473,7 @@ export async function showInsight(pid, prefix) {
   S.detailKind = 'prefix'
   S.asnView = null
   S.selectedPid = pid
-  if (S.view !== 'trace') go('/' + prefix)   // trace 视图里 insight 走浮窗, 不动 URL(也使浮窗内部链接自洽)
+  if (S.view !== 'trace' && S.view !== 'whois') go('/' + prefix)   // trace 浮窗 / whois 首页内联: 不动 URL(whois 保 /whois/<raw>)
   S.insight = { loading: true, prefix }   // prefix 先填上, 让页标题/历史项立刻可辨识(查询返回前)
   const v6 = (prefix || '').includes(':')
   // 用 prefix 串的 [start,end] 裁剪 prefixes 文件(该 pid 的行 ip_start 落在此区间内, 只读相交文件)。
@@ -561,7 +561,7 @@ export async function showAsn(asn) {
   S.selectedPid = null
   S.insight = null
   S.asnView = { asn, name: asnName(asn), loading: true }
-  if (S.view !== 'trace') go('/' + asn)      // trace 视图里走浮窗, 不动 URL
+  if (S.view !== 'trace' && S.view !== 'whois') go('/' + asn)      // trace 浮窗 / whois 首页内联: 不动 URL(whois 保 /whois/<raw>)
   if (!S.ready) { return }
   try {
     // 通告前缀列表走 byorigin(纯 origin, 无 paths_blob); 计数走 origin_counts 预聚合(O(1), 与 family 过滤无关)。
@@ -765,7 +765,7 @@ export function showDomain(domain) {
   S.insight = null
   S.asnView = null
   S.domainView = { domain }
-  go('/dns/' + domain)
+  if (S.view !== 'whois') go('/dns/' + domain)   // whois 首页内联: 不动 URL(保 /whois/<raw>)
 }
 
 // 精确框 ASN -> 设主体 + 自动开面板(主体变化时); 非 ASN -> 清主体。
@@ -798,6 +798,7 @@ export function runWhois(input) {
   const raw = String(input || '').trim()
   S.view = 'whois'
   S.probeExpanded = false   // 进入查询时收起「你的接入」摊开网格
+  closeDetailState()        // 换查询先清旧详情态(详情随后由下方深度加载重建)
   if (!raw) { S.whois = { input: '', kind: null, key: null, err: '' }; go('/'); return }   // 首页 = /
   const p = classifyQuery(raw)
   if (p.kind === 'asn') S.whois = { input: raw, kind: 'autnum', key: String(p.asn), err: '' }
@@ -805,6 +806,10 @@ export function runWhois(input) {
   else if (p.kind === 'domain') S.whois = { input: raw, kind: 'domain', key: features.rdapWhois ? registrableDomain(p.domain) : p.domain, err: '' }
   else return openInRouting(raw)   // as-set / name / text -> 路由分析(不在 WHOIS 范围)
   go('/whois/' + encodeURIComponent(raw))
+  // 首页内联「完整详情」= 复用路由页那套抽屉加载(DetailBody 据 S.detailKind 渲染);
+  // whois 视图内这些 loader 已被门控为不改 URL(仍保 /whois/<raw>)。asn/ip 需引擎, loadInsightFor 内部按需 ensureEngine。
+  if (p.kind === 'domain') showDomain(S.whois.key)     // 纯 RDAP, 不碰引擎
+  else loadInsightFor(raw)                             // asn -> showAsn; ip/前缀 -> 覆盖前缀开 insight
 }
 
 // 跳到路由分析: 「查看更多信息」、首页搜非 WHOIS 对象、「高级搜索」开关。把对象填进精确框跑一次 + 开对应详情。
