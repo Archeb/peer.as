@@ -43,7 +43,7 @@ export const S = $state({
   // as-set 嵌套列表载荷(mode==='asset' 时主内容区改渲染 AsSetView): { key, name, source, descr, n_members, loading, error, candidates }
   // 树的子层由 AsSetTree 组件经 loadAsSetMembers(setKey) 懒加载(点一层查一层 + 环检测)。
   asset: null,
-  filters: { cc: '', city: '', person: '', path: '', origin: '', ip: '', limit: 500, incllow: false, fam: 'all' },
+  filters: { cc: '', city: '', person: '', path: '', origin: '', ip: '', limit: 500, incllow: true, fam: 'all' },
   selectedPid: null,       // 选中行(高亮 + 展开本段)
   // ── 右侧详情面板 ──────────────────────────────────────────────
   // detailKind: 当前面板视图 'prefix' | 'asn' | 'domain' | null(关闭)。prefix 载荷在 insight, asn 在 asnView, domain 在 domainView。

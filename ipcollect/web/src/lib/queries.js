@@ -216,7 +216,7 @@ async function runSubnet(r, f) {
   // v6: 比较在 SQL 里做(start/end 是 BigInt -> 十进制串 + ::UHUGEINT); 不取回原始 ip 整数(JS 会丢精度)。
   const lit = v6 ? (x => `'${x}'::UHUGEINT`) : (x => `${x}`)
   const src = rpList(prefixesFilesForRange(start, end, v6))
-  if (v6 && !(S.meta?.files?.prefixes_v6 || []).length) { S.rows = []; S.mode = 'subnet'; S.msg = `${label} · ${t('no_cover')}`; return }
+  if (v6 && !(S.meta?.files?.prefixes_v6 || []).length) { S.rows = []; S.mode = 'subnet'; S.msg = `${label} · ${t('no_cover')}`; showBareIp((f.ip || '').trim() || label, v6); return }
   // 区间重叠: 命中覆盖该范围的母段, 以及落在该范围内的更具体段。
   const w = [`ip_start <= ${lit(end)}`, `ip_end >= ${lit(start)}`]
   const cc = resolveCC(f.cc)
@@ -240,7 +240,8 @@ async function runSubnet(r, f) {
   S.rows = rows; S.mode = 'subnet'; S.more = more
   const extra = [cc && ccLabel(cc), city, !f.incllow && (S.lang === 'zh' ? '隐藏低可见' : 'low-vis hidden')].filter(Boolean).join(' · ')
   const tail = extra ? ' · ' + extra : ''
-  if (!rows.length) { S.msg = `${label}${tail} · ${t('no_cover')}`; return }
+  // 库内无任何覆盖行(含母段/更具体段)= 该 IP 不可见: 自动弹出「裸 IP」详情抽屉(WHOIS/RDAP/IRR, 无路径)。
+  if (!rows.length) { S.msg = `${label}${tail} · ${t('no_cover')}`; showBareIp((f.ip || '').trim() || label, v6); return }
   S.msg = `${label} · ${rows.length}${more ? '+' : ''} ${t('subnet_done')}${tail}`
 }
 
@@ -843,7 +844,43 @@ export async function loadInsightFor(query) {
   let m
   try { m = await enrichIp(s, v6) } catch { m = null }
   if (m && m.pid != null) showInsight(m.pid, m.prefix)
-  else S.insight = { error: t('no_cover') }
+  else showBareIp(s, v6)                              // 库内无覆盖: 仍开抽屉, 只给 WHOIS/RDAP/IRR(无路径)
+}
+
+// 库内无前缀覆盖该 IP 时的「裸 IP」详情: 不查 BGP 路径/路由图, 只保留 WHOIS/RDAP + 尽力的 IRR。
+// 供 WHOIS 首页内联 & 路由分析抽屉复用; DetailBody 据 insight.bareIp 渲染占位「无可见路径」。不动 URL。
+export function showBareIp(ip, v6) {
+  const s = String(ip || '').trim()
+  if (!s) return
+  if (S.insight?.bareIp === s) return   // 幂等: runSubnet 与 openPrefixByString 可能对同一 IP 都调, 避免重复加载 IRR
+  S.detailKind = 'prefix'
+  S.selectedPid = null
+  S.asnView = null
+  S.insight = {
+    bareIp: s, prefix: null, loc: '',
+    origin_asn: null, origin_name: '', n_paths: 0,
+    n_origins: 0, origins: [],
+    lowvis: false, rpki: 0, irr: 0, irrObjs: [],
+    paths: [], sup: [], sub: [],
+  }
+  if (S.meta?.has_irr) loadBareIrr(s, v6)
+}
+
+// 尽力: 库内 IRR 里覆盖该 IP 的 route 对象(取覆盖范围最小/最具体那一档的全部 origin), 写回 S.insight.irrObjs。
+// 无对应 pid, 故按范围覆盖查(而非 loadInsightIrr 的精确前缀相等)。失败/无数据静默。
+async function loadBareIrr(ip, v6) {
+  try {
+    const r = v6 ? ip6Range(ip) : ip2range(ip)
+    if (!r) return
+    const src = rpList(irrFilesForRange(r.start, r.end, v6))
+    const lit = v6 ? (x => `'${x}'::UHUGEINT`) : (x => `${x}`)
+    const cover = `${src} WHERE ip_start <= ${lit(r.start)} AND ip_end >= ${lit(r.end)}`
+    // 只保留最具体那一档(range 宽度最小)的 route 对象, 避免混入 /8 这类超大母段。
+    const rows = await q(`SELECT origin, sources FROM ${cover}
+      AND (ip_end - ip_start) = (SELECT min(ip_end - ip_start) FROM ${cover}) ORDER BY origin`)
+    const objs = rows.map(r0 => ({ origin: Number(r0.origin), sources: Array.from(r0.sources || []).map(String) }))
+    if (S.insight?.bareIp === ip && objs.length) S.insight = { ...S.insight, irrObjs: objs }
+  } catch (e) { /* IRR 明细失败不影响裸 IP 详情主体 */ }
 }
 // 仅清空详情状态(不动 URL): 供 trace 浮窗的关闭钮用。
 export function clearDetail() { closeDetailState() }
@@ -853,7 +890,7 @@ export function goHome() {
   closeDetailState()
   S.notFound = null         // 离开 404
   S.probeExpanded = false   // 回首页复位「你的接入」摊开网格
-  Object.assign(S.filters, { cc: '', city: '', person: '', path: '', origin: '', ip: '', limit: 500, incllow: false, fam: 'all' })
+  Object.assign(S.filters, { cc: '', city: '', person: '', path: '', origin: '', ip: '', limit: 500, incllow: true, fam: 'all' })
   S.dns = null; S.asset = null; S.rows = []; S.msg = ''
   if (features.whoisView) { S.view = 'whois'; S.whois = { input: '', kind: null, key: null, err: '' }; go('/') }
   else { S.view = 'routing'; go('/'); ensureEngine().then(() => runSearch()).catch(() => {}) }
@@ -863,7 +900,7 @@ export function goHome() {
 // 复位到干净首页(同 goHome), 但摊开「你的接入」网格 + 落 /probe URL(可深链/前进后退)。
 export function openProbe() {
   closeDetailState()
-  Object.assign(S.filters, { cc: '', city: '', person: '', path: '', origin: '', ip: '', limit: 500, incllow: false, fam: 'all' })
+  Object.assign(S.filters, { cc: '', city: '', person: '', path: '', origin: '', ip: '', limit: 500, incllow: true, fam: 'all' })
   S.dns = null; S.asset = null; S.rows = []; S.msg = ''
   S.view = 'whois'
   S.whois = { input: '', kind: null, key: null, err: '' }
@@ -1094,8 +1131,11 @@ async function openPrefixByString(s) {
   const lit = v6 ? (x => `'${x}'::UHUGEINT`) : (x => `${x}`)
   try {
     const rows = await q(`SELECT pid, prefix FROM ${src} WHERE ip_start=${lit(r.start)} AND ip_end=${lit(r.end)} ORDER BY n_paths DESC LIMIT 1`)
-    if (rows[0]) showInsight(rows[0].pid, rows[0].prefix)
-  } catch (e) { /* 无精确匹配则仅显示子网搜索结果 */ }
+    if (rows[0]) { showInsight(rows[0].pid, rows[0].prefix); return }
+  } catch (e) { /* 无精确匹配, 落到下面的裸 IP 判定 */ }
+  // 无精确前缀 + 左侧子网表也无任何覆盖行 = 库内完全无覆盖 -> 直接开「裸 IP」抽屉(仅 WHOIS/RDAP/IRR)。
+  // 有覆盖行(更大母段)时不自动开, 让用户从左表点选具体段。
+  if (!S.rows.length) showBareIp(s, v6)
 }
 
 // 本站「已定义」的路径形态白名单(供 applyRoute 的 404 守卫用)。传入的 path 已去掉首尾斜杠并解码。

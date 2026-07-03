@@ -17,6 +17,9 @@
   import OriginStatus from './OriginStatus.svelte'
 
   let ins = $derived(S.insight)
+  // 库内无前缀覆盖该 IP(bareIp): 只渲染 WHOIS/RDAP/IRR, BGP 路径/路由图/父子段全部换成占位。
+  let bare = $derived(!!ins?.bareIp)
+  let subj = $derived(ins?.prefix || ins?.bareIp || '')   // WHOIS/holder 查询主体: 前缀或裸 IP
   // IRR 来源库权威性(RIR 直营=权威绿; 第三方=中性灰)。
   let irrAuth = $derived(new Set(S.meta?.irr?.authoritative || []))
   const isAuth = s => irrAuth.has(String(s).toUpperCase())
@@ -37,9 +40,9 @@
   // IP 所属组织(RDAP inetnum 持有者): 与 origin ASN(运营商)不同, 实时查、失败静默。换前缀重置。
   let holder = $state('')
   $effect(() => {
-    const px = ins?.prefix
+    const px = ins?.prefix || ins?.bareIp
     holder = ''
-    if (px) holderOrg(px).then(h => { if (S.insight?.prefix === px && h) holder = h })
+    if (px) holderOrg(px).then(h => { if ((S.insight?.prefix || S.insight?.bareIp) === px && h) holder = h })
   })
 </script>
 
@@ -52,7 +55,8 @@
 {:else if ins?.error}
   <div class="dload err">{ins.error}</div>
 {:else if ins}
-  <h2>{ins.prefix} <span class="loc">· {ins.loc}</span></h2>
+  <h2>{subj} {#if bare}<span class="loc">· {t('no_cover')}</span>{:else if ins.loc}<span class="loc">· {ins.loc}</span>{/if}</h2>
+  {#if !bare}
   <div class="pill">
     origin asn <button class="originlink" onclick={() => showAsn(ins.origin_asn)} disabled={!ins.origin_asn}><b>{ins.origin_asn || ''}</b>{ins.origin_name ? ` (${ins.origin_name})` : ''}</button><OriginStatus rpki={ins.rpki} irr={ins.irr} unknown />
     {#if ins.n_origins > 1}<span class="badge b-moas moastag" title={t('moas_note')}>{t('moas')} · {ins.n_origins}</span>{/if}
@@ -61,6 +65,7 @@
       · <span class="badge {ins.lowvis ? 'b-warn' : 'b-ok'}">{ins.n_paths || 0}/{S.meta.dfz_ref} {ins.lowvis ? t('lowvis') : 'DFZ'}</span>
     {/if}
   </div>
+  {/if}
   {#if holder}
     <div class="pill holder"><span class="hk">{t('ip_holder')}</span> {holder}</div>
   {/if}
@@ -84,6 +89,10 @@
     </div>
   {/if}
 
+  {#if bare}
+    <!-- 库内无可见路径: 该 IP 未被任何采集点观测到, 用占位替代路由图/路径/父子段三节。 -->
+    <div class="nopath">{t('no_visible_path')}</div>
+  {:else}
   <h3 class="dsec" data-sec="graph">{t('graph_title')}</h3>
   <PathGraph rec={{ paths: ins.paths, origin_asn: ins.origin_asn, origins: ins.origins?.map(o => o.asn), prefix: ins.prefix }} />
 
@@ -120,6 +129,7 @@
       {pathsOpen ? t('collapse') : t('show_all').replace('{n}', ins.paths.length)}
     </button>
   {/if}
+  {/if}
 
   {#if S.meta?.has_irr}
     <h3 class="dsec" data-sec="irr">{t('sec_irr')}</h3>
@@ -143,7 +153,7 @@
     </div>
   {/if}
 
-  <Whois kind="ip" rkey={ins.prefix} />
+  <Whois kind="ip" rkey={subj} />
 {/if}
 
 <style>
@@ -157,6 +167,11 @@
   .originlink:hover:not(:disabled) { text-decoration: underline; }
   .originlink:disabled { cursor: default; color: var(--muted); }
   .originlink:disabled b { color: var(--fg); }
+  /* 裸 IP(库内无覆盖): 替代路由图/路径三节的占位说明 */
+  .nopath {
+    margin: 16px 0 4px; padding: 14px 16px; font-size: 12.5px; line-height: 1.6; color: var(--muted);
+    background: var(--inbg); border: 1px dashed var(--line); border-radius: 8px;
+  }
   .dload { color: var(--muted); padding: 30px 0; font-size: 13px; }
   .dload.err { color: var(--bad, #dc2626); }
   h2 { font: 600 15px var(--mono); margin: 0 0 7px; color: var(--fg); }
