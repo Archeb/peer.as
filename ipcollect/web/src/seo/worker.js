@@ -112,6 +112,38 @@ function matchRoute(pathname) {
   return null
 }
 
+function tracePlace(h) { return String((h && (h.city || h.cc)) || 'Unknown').trim() }
+function tracePlaceKey(h) {
+  const lat = Number(h && h.lat), lon = Number(h && h.lon)
+  if (Number.isFinite(lat) && Number.isFinite(lon)) return `${lat.toFixed(3)},${lon.toFixed(3)}`
+  return tracePlace(h).replace(/[市县区]$/, '').toLowerCase()
+}
+function traceNodes(hops) {
+  const valid = (Array.isArray(hops) ? hops : []).filter(h => h && (tracePlace(h) !== 'Unknown' || Number(h.asn)))
+  const out = []; const seen = new Set()
+  for (let i = 0; i < valid.length; i++) {
+    const h = valid[i]; const key = tracePlaceKey(h)
+    if (seen.has(key) && i !== valid.length - 1) continue
+    if (out.length && tracePlaceKey(out[out.length - 1]) === key) { out[out.length - 1] = h; continue }
+    seen.add(key); out.push(h)
+  }
+  return out
+}
+async function traceMeta(traceId) {
+  try {
+    const r = await fetch(`https://assets.nxtrace.org/tracemap/${encodeURIComponent(traceId)}.json`,
+      { signal: AbortSignal.timeout(5000) })
+    if (!r.ok) return null
+    const obj = await r.json()
+    if (!obj || obj.schema !== 'peeras.trace.v1') return null
+    const probe = Array.isArray(obj.probes) && obj.probes[0]
+    const nodes = traceNodes(probe && probe.hops)
+    if (!nodes.length) return null
+    const route = nodes.map(h => `${tracePlace(h)}${Number(h.asn) ? ` AS${Number(h.asn)}` : ''}`).join(' → ')
+    return { from: tracePlace(nodes[0]), to: tracePlace(nodes[nodes.length - 1]), route }
+  } catch { return null }
+}
+
 // 渲染一个 SEO 路由的正文 -> {body} 或 null(数据缺失则回退给 SPA)。
 async function renderRoute(r, lang, brand, env, base) {
   if (r.kind === 'entry') {
@@ -536,6 +568,13 @@ export default {
       const site = { '@type': 'WebSite', name: brand, url: brandUrl }
       if (r.kind === 'entry') {
         const x = entryText(lang, r.page, brand); title = x.title; desc = x.desc; cta = x.cta
+        if (r.page === 'trace' && validNt) {
+          const tm = await traceMeta(validNt)
+          if (tm) {
+            title = `${tm.from} → ${tm.to} | ${brand} × NextTrace`
+            desc = tm.route
+          }
+        }
         jsonld = { '@context': 'https://schema.org', '@type': 'WebPage',
           name: title, description: desc, url: canonical, inLanguage: htmlLang, isPartOf: site }
       } else if (r.kind === 'asn') {
