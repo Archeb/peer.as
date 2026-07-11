@@ -11,6 +11,7 @@
 路由(由 CF Function 的 og:image 指过来):
   GET /og/asn.png?n=<asn>
   GET /og/asset.png?k=<url-encoded set_key>
+  GET /og/trace.png?nt=<nexttrace id>
   GET /og/home.png            品牌通用卡(入口页用)
 """
 import datetime
@@ -35,11 +36,14 @@ CACHE = os.environ.get("OG_CACHE", "/var/cache/og-renderer")
 ASSETS = os.environ.get("OG_ASSETS", os.path.dirname(os.path.abspath(__file__)))
 PORT = int(os.environ.get("OG_PORT", "8092"))
 W, H = 1200, 630
+NTRACE_BASE = "https://assets.nxtrace.org/tracemap/"
+NTRACE_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}")
 
 BG = (10, 14, 21)       # #0a0e15  与站点深色主题一致
 FG = (221, 230, 240)    # #dde6f0
 MUTED = (143, 158, 178)
 ACCENT = (91, 157, 255) # #5b9dff
+NTRACE = (255, 149, 2)  # #ff9502
 SIGNAL = (248, 113, 113) # #f87171  abuse 联系人高亮(红)
 CARD = (18, 24, 38)
 LINE = (30, 38, 56)
@@ -142,13 +146,17 @@ def data_mtime():
 
 
 # ── 绘图 ───────────────────────────────────────────────────────────────────────────────
-def _base():
+def _base(partner=None):
     img = Image.new("RGB", (W, H), BG)
     d = ImageDraw.Draw(img)
     # 左上品牌(.AS 用 accent)
     d.text((64, 54), "PEER", font=_font("lb", 46), fill=FG)
     w = d.textlength("PEER", font=_font("lb", 46))
     d.text((64 + w, 54), ".AS", font=_font("lb", 46), fill=ACCENT)
+    if partner:
+        x = 64 + w + d.textlength(".AS", font=_font("lb", 46))
+        d.text((x + 17, 57), "×", font=_font("lr", 40), fill=MUTED)
+        d.text((x + 57, 54), partner, font=_font("lb", 46), fill=NTRACE)
     # 右上小标签
     tag = "BGP · IP · ASN Insights"
     tw = d.textlength(tag, font=_font("lr", 26))
@@ -430,6 +438,151 @@ def render_home():
     return img
 
 
+def _trace_data(trace_id):
+    req = urllib.request.Request(
+        NTRACE_BASE + trace_id + ".json",
+        headers={"Accept": "application/json", "User-Agent": "peer.as-og/1.0"})
+    with urllib.request.urlopen(req, timeout=8) as r:
+        if int(r.headers.get("Content-Length") or 0) > 2_000_000:
+            raise ValueError("trace map too large")
+        raw = r.read(2_000_001)
+    if len(raw) > 2_000_000:
+        raise ValueError("trace map too large")
+    obj = json.loads(raw)
+    if obj.get("schema") != "peeras.trace.v1":
+        raise ValueError("unsupported trace schema")
+    return obj
+
+
+def _place_name(h):
+    return str((h or {}).get("city") or (h or {}).get("cc") or "Unknown").strip()
+
+
+def _place_key(h):
+    """NextTrace 偶有“广州/广州市”混用；坐标相同应视为同一地点。"""
+    try:
+        return (round(float(h.get("lat")), 3), round(float(h.get("lon")), 3))
+    except (TypeError, ValueError):
+        return re.sub(r"[市县区]$", "", _place_name(h)).lower()
+
+
+def _trace_nodes(obj):
+    probes = obj.get("probes") or []
+    hops = (probes[0].get("hops") or []) if probes and isinstance(probes[0], dict) else []
+    valid = [h for h in hops if isinstance(h, dict) and (_place_name(h) != "Unknown" or h.get("asn"))]
+    if not valid:
+        return []
+
+    # 全局去重地点，但目标永远作为最后一个节点保留；回到曾经过的城市是有意义的路径信息。
+    out, seen = [], set()
+    for i, h in enumerate(valid):
+        key = _place_key(h)
+        if key in seen and i != len(valid) - 1:
+            continue
+        if out and _place_key(out[-1]) == key:
+            out[-1] = h
+            continue
+        seen.add(key)
+        out.append(h)
+    if len(out) <= 10:
+        return out
+    # 两行仍放不下时固定为 9 个真实节点 + 一个省略节点，首尾与两端上下文都保留。
+    return out[:5] + [None] + out[-4:]
+
+
+def _trace_tag(h):
+    if not h:
+        return ""
+    asn = int(h.get("asn") or 0)
+    name = re.sub(r"\s+", " ", str(h.get("name") or "")).strip()
+    if asn and name:
+        return f"AS{asn}  {name}"
+    return f"AS{asn}" if asn else (name or "Unknown network")
+
+
+def _trace_asn(h):
+    if not h:
+        return ""
+    asn = int(h.get("asn") or 0)
+    return f"AS{asn}" if asn else "?"
+
+
+def _draw_trace_endpoint(d, y, label, hop):
+    # 全部使用 middle anchor；不同字体的 ascender/baseline 不再让 FROM/TO 与中文上下错位。
+    lf, pf, tf = _font("lr", 23), font_for(_place_name(hop), True, 34), font_for(_trace_tag(hop), False, 23)
+    d.text((PAD, y), label, font=lf, fill=MUTED, anchor="lm")
+    d.text((PAD + 105, y), _place_name(hop), font=pf, fill=FG, anchor="lm")
+    place_w = d.textlength(_place_name(hop), font=pf)
+    d.text((PAD + 128 + place_w, y), _truncate(d, _trace_tag(hop), tf, W - PAD * 2 - 148 - place_w),
+           font=tf, fill=ACCENT, anchor="lm")
+
+
+def _draw_chevron(d, a, b):
+    ax, ay = a
+    bx, by = b
+    if ay == by:
+        mx = (ax + bx) / 2
+        direction = 1 if bx > ax else -1
+        d.line([(mx - 6 * direction, ay - 8), (mx + 3 * direction, ay),
+                (mx - 6 * direction, ay + 8)], fill=ACCENT, width=3)
+        return
+    # 行尾折返：向下 chevron 放在右下转角，不贴着上一行节点的 ASN 标签。
+    d.line([(bx - 8, by - 10), (bx, by - 1), (bx + 8, by - 10)], fill=ACCENT, width=3)
+
+
+def render_trace(trace_id):
+    obj = _trace_data(trace_id)
+    nodes = _trace_nodes(obj)
+    if not nodes:
+        return None
+    real = [n for n in nodes if n]
+    img, d = _base("NextTrace")
+    _draw_trace_endpoint(d, 153, "FROM", real[0])
+    _draw_trace_endpoint(d, 570, "TO", real[-1])
+
+    left, right = 150, W - 150
+    split = min(5, (len(nodes) + 1) // 2)
+    rows = [nodes[:split], nodes[split:]] if len(nodes) > 5 else [nodes]
+    entries = []
+    for ri, row in enumerate(rows):
+        cy = 286 if len(rows) == 2 else 350
+        if ri == 1:
+            cy = 435
+        # 每行铺满可用宽度；第二行反向延续，形成不歧义的蛇形路线。
+        if ri == 0:
+            col_step = (right - left) / max(1, len(row) - 1)
+            xs = [left + col * col_step for col in range(len(row))]
+        else:
+            # 右下角只作为折返点，不承载节点；真实地点从下一列开始向左铺开。
+            entries.append(((right, cy), None, True))
+            col_step = (right - left) / max(1, len(row))
+            xs = [right - (col + 1) * col_step for col in range(len(row))]
+        entries.extend([((x, cy), hop, False) for x, hop in zip(xs, row)])
+    positions = [pos for pos, _, _ in entries]
+    for i in range(len(positions) - 1):
+        d.line([positions[i], positions[i + 1]], fill=LINE, width=4)
+        _draw_chevron(d, positions[i], positions[i + 1])
+    for (x, cy), hop, is_bend in entries:
+        if is_bend:
+            continue
+        if hop is None:
+            d.ellipse((x - 22, cy - 22, x + 22, cy + 22), fill=CARD, outline=LINE, width=2)
+            d.text((x, cy - 5), "…", font=_font("lb", 31), fill=MUTED, anchor="mm")
+            continue
+        d.ellipse((x - 8, cy - 8, x + 8, cy + 8), fill=ACCENT)
+        place = _place_name(hop)
+        pf = font_for(place, True, 31)
+        d.text((x, cy - 38), _truncate(d, place, pf, 190), font=pf, fill=FG, anchor="ms")
+        tag = _trace_asn(hop)
+        tf = _font("lr", 31)
+        tw = d.textlength(tag, font=tf)
+        tx = x
+        d.rounded_rectangle((tx - tw / 2 - 13, cy + 23, tx + tw / 2 + 13, cy + 69), radius=6,
+                            fill=CARD, outline=LINE, width=1)
+        d.text((tx, cy + 46), tag, font=tf, fill=MUTED, anchor="mm")
+    return img
+
+
 # ── HTTP ───────────────────────────────────────────────────────────────────────────────
 def _safe(s):
     return re.sub(r"[^A-Za-z0-9._:-]", "_", s)[:120]
@@ -443,12 +596,16 @@ def render(kind, arg):
         cf, img = f"asset-{_safe(arg)}.png", lambda: render_asset(arg)
     elif kind == "home":
         cf, img = "home.png", render_home
+    elif kind == "trace":
+        if not NTRACE_ID_RE.fullmatch(arg or ""):
+            return None, None
+        cf, img = f"trace-{_safe(arg)}.png", lambda: render_trace(arg)
     else:
         return None, None
     path = os.path.join(CACHE, cf)
     # 命中缓存且不旧于源数据 -> 直接返回
     try:
-        if os.path.getmtime(path) >= data_mtime():
+        if kind == "trace" or os.path.getmtime(path) >= data_mtime():
             with open(path, "rb") as fh:
                 return fh.read(), path
     except OSError:
@@ -502,11 +659,20 @@ class Handler(BaseHTTPRequestHandler):
             kind, arg = "asset", (q.get("k", [""])[0])
         elif u.path == "/og/home.png":
             kind, arg = "home", ""
+        elif u.path == "/og/trace.png":
+            kind, arg = "trace", (q.get("nt", [""])[0])
         else:
             return self._send(404, b"not found")
         try:
             data, _ = render(kind, arg)
-        except Exception as e:  # noqa  渲染异常 -> 404(分享方无图,页面文字预览仍在)
+        except Exception as e:  # trace 上游临时失败时退回品牌图；其他实体维持显式错误。
+            if kind == "trace":
+                try:
+                    data, _ = render("home", "")
+                    if data:
+                        return self._send(200, data, "image/png", cache=False)
+                except Exception:
+                    pass
             return self._send(500, str(e).encode())
         if not data:
             return self._send(404, b"no such entity")

@@ -6,6 +6,11 @@ PEER.AS 的功能更新记录。仅记录**面向用户的功能性变更**（�
 Feature-level changelog for PEER.AS. Only **user-facing functional changes** are listed
 (new features, visible behavior changes); pure maintenance/refactors/data refreshes are omitted. Newest first.
 
+## 2026-07-11
+
+- **新增：NextTrace 路径分享卡。** 分享 `peer.as/trace?nt=<id>` 时，社交预览现在以极简路径图展示去重后的地理位置、逐跳 ASN 与运营商，并在过长路径中自动折叠中间跳点。
+  **Added: NextTrace route share cards.** Sharing `peer.as/trace?nt=<id>` now produces a compact route preview with deduplicated locations, hop ASNs and operators, automatically collapsing the middle of long paths.
+
 ## 2026-07-01
 
 - **新增：PeeringDB 画像。** ASN 详情面板新增 PeeringDB 分区，展示该网络的**自报概况**（类型 / 流量规模 / 对等策略 / IRR as-set 等）、**接入的交换中心（IX presence）**（含端口速率、是否与 route server 对等）与**入驻的数据中心（facility presence）**。数据来自 CAIDA PeeringDB 快照，全部预处理成静态数据、前端零后端查询。

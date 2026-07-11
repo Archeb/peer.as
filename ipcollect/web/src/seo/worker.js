@@ -522,7 +522,9 @@ export default {
 
       // canonical 永远指向**品牌域**(非服务主机),避免 *.pages.dev 与 peer.as 重复收录。
       const cHost = canonicalHost(host)
-      const canonical = `https://${cHost}${url.pathname}`
+      const nt = r.kind === 'entry' && r.page === 'trace' ? url.searchParams.get('nt') : null
+      const validNt = nt && /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(nt) ? nt : null
+      const canonical = `https://${cHost}${url.pathname}${validNt ? `?nt=${encodeURIComponent(validNt)}` : ''}`
       const brandUrl = `https://${cHost}/`
       const htmlLang = lang === 'zh' ? 'zh-CN' : 'en'
 
@@ -572,6 +574,8 @@ export default {
         const vq = ver ? `&v=${ver}` : ''
         if (r.kind === 'asn') ogImage = `${OG}/asn.png?n=${r.asn}${vq}`
         else if (r.kind === 'asset') ogImage = `${OG}/asset.png?k=${encodeURIComponent(r.key)}${vq}`
+        else if (r.kind === 'entry' && r.page === 'trace' && validNt)
+          ogImage = `${OG}/trace.png?nt=${encodeURIComponent(validNt)}`
         else ogImage = `${OG}/home.png${ver ? `?v=${ver}` : ''}`
       }
 
