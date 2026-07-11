@@ -149,18 +149,18 @@ def data_mtime():
 def _base(partner=None):
     img = Image.new("RGB", (W, H), BG)
     d = ImageDraw.Draw(img)
+    header_y = 77
     # 左上品牌(.AS 用 accent)
-    d.text((64, 54), "PEER", font=_font("lb", 46), fill=FG)
+    d.text((64, header_y), "PEER", font=_font("lb", 46), fill=FG, anchor="lm")
     w = d.textlength("PEER", font=_font("lb", 46))
-    d.text((64 + w, 54), ".AS", font=_font("lb", 46), fill=ACCENT)
+    d.text((64 + w, header_y), ".AS", font=_font("lb", 46), fill=ACCENT, anchor="lm")
     if partner:
         x = 64 + w + d.textlength(".AS", font=_font("lb", 46))
-        d.text((x + 17, 57), "×", font=_font("lr", 40), fill=MUTED)
-        d.text((x + 57, 54), partner, font=_font("lb", 46), fill=NTRACE)
+        d.text((x + 17, header_y), "×", font=_font("lr", 40), fill=MUTED, anchor="lm")
+        d.text((x + 57, header_y), partner, font=_font("lb", 46), fill=NTRACE, anchor="lm")
     # 右上小标签
     tag = "BGP · IP · ASN Insights"
-    tw = d.textlength(tag, font=_font("lr", 26))
-    d.text((W - 64 - tw, 66), tag, font=_font("lr", 26), fill=MUTED)
+    d.text((W - 64, header_y), tag, font=_font("lr", 26), fill=MUTED, anchor="rm")
     return img, d
 
 def _truncate(d, s, fnt, maxw):
@@ -484,10 +484,10 @@ def _trace_nodes(obj):
             continue
         seen.add(key)
         out.append(h)
-    if len(out) <= 10:
+    if len(out) <= 8:
         return out
-    # 两行仍放不下时固定为 9 个真实节点 + 一个省略节点，首尾与两端上下文都保留。
-    return out[:5] + [None] + out[-4:]
+    # 两行仍放不下时固定为 7 个真实节点 + 一个省略节点，首尾与两端上下文都保留。
+    return out[:4] + [None] + out[-3:]
 
 
 def _trace_tag(h):
@@ -509,7 +509,7 @@ def _trace_asn(h):
 
 def _draw_trace_endpoint(d, y, label, hop):
     # 全部使用 middle anchor；不同字体的 ascender/baseline 不再让 FROM/TO 与中文上下错位。
-    lf, pf, tf = _font("lr", 23), font_for(_place_name(hop), True, 34), font_for(_trace_tag(hop), False, 23)
+    lf, pf, tf = _font("lr", 23), font_for(_place_name(hop), True, 34), font_for(_trace_tag(hop), False, 34)
     d.text((PAD, y), label, font=lf, fill=MUTED, anchor="lm")
     d.text((PAD + 105, y), _place_name(hop), font=pf, fill=FG, anchor="lm")
     place_w = d.textlength(_place_name(hop), font=pf)
@@ -526,8 +526,7 @@ def _draw_chevron(d, a, b):
         d.line([(mx - 6 * direction, ay - 8), (mx + 3 * direction, ay),
                 (mx - 6 * direction, ay + 8)], fill=ACCENT, width=3)
         return
-    # 行尾折返：向下 chevron 放在右下转角，不贴着上一行节点的 ASN 标签。
-    d.line([(bx - 8, by - 10), (bx, by - 1), (bx + 8, by - 10)], fill=ACCENT, width=3)
+    # 两行之间只用竖线连接，不画向下 chevron。
 
 
 def render_trace(trace_id):
@@ -541,26 +540,25 @@ def render_trace(trace_id):
     _draw_trace_endpoint(d, 570, "TO", real[-1])
 
     left, right = 150, W - 150
-    split = min(5, (len(nodes) + 1) // 2)
-    rows = [nodes[:split], nodes[split:]] if len(nodes) > 5 else [nodes]
+    rows = [nodes[:4], nodes[4:]] if len(nodes) > 4 else [nodes]
     entries = []
     for ri, row in enumerate(rows):
         cy = 286 if len(rows) == 2 else 350
         if ri == 1:
             cy = 435
-        # 每行铺满可用宽度；第二行反向延续，形成不歧义的蛇形路线。
+        # 固定四列；第二行复用同一组列并反向延续，保证上下节点严格对齐。
+        col_step = (right - left) / 3
         if ri == 0:
-            col_step = (right - left) / max(1, len(row) - 1)
             xs = [left + col * col_step for col in range(len(row))]
         else:
-            # 右下角只作为折返点，不承载节点；真实地点从下一列开始向左铺开。
-            entries.append(((right, cy), None, True))
-            col_step = (right - left) / max(1, len(row))
-            xs = [right - (col + 1) * col_step for col in range(len(row))]
+            # 原转角位置现在直接承载第二行首节点。
+            xs = [right - col * col_step for col in range(len(row))]
         entries.extend([((x, cy), hop, False) for x, hop in zip(xs, row)])
     positions = [pos for pos, _, _ in entries]
     for i in range(len(positions) - 1):
         d.line([positions[i], positions[i + 1]], fill=LINE, width=4)
+    # 线段先全部画完，再把 chevron 盖在上层，避免转角箭头被下一段横线遮挡。
+    for i in range(len(positions) - 1):
         _draw_chevron(d, positions[i], positions[i + 1])
     for (x, cy), hop, is_bend in entries:
         if is_bend:
