@@ -38,6 +38,7 @@ PORT = int(os.environ.get("OG_PORT", "8092"))
 W, H = 1200, 630
 NTRACE_BASE = "https://assets.nxtrace.org/tracemap/"
 NTRACE_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}")
+TRACE_OG_VERSION = "2"
 
 BG = (10, 14, 21)       # #0a0e15  与站点深色主题一致
 FG = (221, 230, 240)    # #dde6f0
@@ -597,7 +598,7 @@ def render(kind, arg):
     elif kind == "trace":
         if not NTRACE_ID_RE.fullmatch(arg or ""):
             return None, None
-        cf, img = f"trace-{_safe(arg)}.png", lambda: render_trace(arg)
+        cf, img = f"trace-v{TRACE_OG_VERSION}-{_safe(arg)}.png", lambda: render_trace(arg)
     else:
         return None, None
     path = os.path.join(CACHE, cf)
