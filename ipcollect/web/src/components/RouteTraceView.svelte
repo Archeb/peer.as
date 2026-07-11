@@ -736,6 +736,8 @@
                                     <button class="hlink hip-asn" onclick={() => pick('AS' + h.asn)} title={'AS' + h.asn + (h.name ? ' · ' + h.name : '')}>
                                       <span class="asname">{h.name || 'AS' + h.asn}</span>
                                     </button>
+                                  {:else if h.name}
+                                    <span class="hlink hip-asn static" title={h.name}><span class="asname">{h.name}</span></span>
                                   {/if}
                                 </span>
                                 <span class="hgeo">{h.city || h.cc || ''}</span>
@@ -1190,6 +1192,8 @@
   /* AS 名牌(hops 里只放注册名/Org 名牌): hover 高亮名牌本身 */
   .hip-asn { flex: 0 0 auto; display: inline-flex; align-items: center; min-width: 0; }
   .hip-asn:hover .asname { color: var(--link); border-color: color-mix(in srgb, var(--link) 45%, var(--line)); }
+  .hip-asn.static { cursor: default; }
+  .hip-asn.static:hover .asname { color: var(--muted); border-color: var(--line); }
   .hops li.tgt .hip-ip, .hops li.tgt .hip-ip .rdns { color: var(--signal); }
   .hgeo { font: 500 11px var(--sans); color: var(--muted); text-align: right; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 96px; justify-self: end; }
   .hrtt { font: 600 11.5px var(--mono); color: var(--fg); text-align: right; white-space: nowrap; }

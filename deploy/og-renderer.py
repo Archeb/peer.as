@@ -16,6 +16,7 @@
 """
 import datetime
 import io
+import ipaddress
 import json
 import os
 import re
@@ -38,7 +39,7 @@ PORT = int(os.environ.get("OG_PORT", "8092"))
 W, H = 1200, 630
 NTRACE_BASE = "https://assets.nxtrace.org/tracemap/"
 NTRACE_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}")
-TRACE_OG_VERSION = "2"
+TRACE_OG_VERSION = "3"
 
 BG = (10, 14, 21)       # #0a0e15  与站点深色主题一致
 FG = (221, 230, 240)    # #dde6f0
@@ -496,6 +497,11 @@ def _trace_tag(h):
         return ""
     asn = int(h.get("asn") or 0)
     name = re.sub(r"\s+", " ", str(h.get("name") or "")).strip()
+    try:
+        if ipaddress.ip_interface(str(h.get("ip") or "")).ip in ipaddress.ip_network("59.43.0.0/16"):
+            name = "CN2"
+    except ValueError:
+        pass
     if asn and name:
         return f"AS{asn}  {name}"
     return f"AS{asn}" if asn else (name or "Unknown network")

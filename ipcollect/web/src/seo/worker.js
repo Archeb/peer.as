@@ -27,7 +27,7 @@ import { iSpinner } from '../lib/icons.js'   // 复用 app 图标(纯 FA re-expo
 // 加载罩的 spinner: 直接取 app 的 faSpinner 路径, 内联成可旋转 SVG(复用 .boot 观感)。
 const [_SPW, _SPH, , , _SPD] = iSpinner.icon
 const SPINNER = `<svg viewBox="0 0 ${_SPW} ${_SPH}" fill="currentColor" aria-hidden="true"><path d="${_SPD}"/></svg>`
-const TRACE_OG_VERSION = '2'
+const TRACE_OG_VERSION = '3'
 
 // ── isolate 级缓存(promise) ──────────────────────────────────────────
 let _asnP, _asnamesP, _assetP, _netP, _ixP, _metaP, _ctx
