@@ -39,7 +39,7 @@ PORT = int(os.environ.get("OG_PORT", "8092"))
 W, H = 1200, 630
 NTRACE_BASE = "https://assets.nxtrace.org/tracemap/"
 NTRACE_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}")
-TRACE_OG_VERSION = "3"
+TRACE_OG_VERSION = "4"
 
 BG = (10, 14, 21)       # #0a0e15  与站点深色主题一致
 FG = (221, 230, 240)    # #dde6f0
@@ -510,6 +510,11 @@ def _trace_tag(h):
 def _trace_asn(h):
     if not h:
         return ""
+    try:
+        if ipaddress.ip_interface(str(h.get("ip") or "")).ip in ipaddress.ip_network("59.43.0.0/16"):
+            return "CN2"
+    except ValueError:
+        pass
     asn = int(h.get("asn") or 0)
     return f"AS{asn}" if asn else "?"
 

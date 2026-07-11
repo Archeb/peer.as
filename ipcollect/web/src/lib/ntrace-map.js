@@ -5,8 +5,6 @@
 // The JSON is already shaped for peer.as: { target, probes:[{hops:[]}] }.
 // This module only validates ids and fills UI-only fields used by RouteTraceView.
 
-import { traceAsName } from './trace-overrides.js'
-
 const BASE = 'https://assets.nxtrace.org/tracemap/'
 const ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/
 const PALETTE = [
@@ -26,7 +24,7 @@ function normalizeHop(h, fallbackIdx) {
     ip: h?.ip || null,
     rdns: h?.rdns || '',
     asn: Number.isFinite(Number(h?.asn)) ? Number(h.asn) : 0,
-    name: traceAsName(h?.ip, h?.name),
+    name: h?.name || '',
     cc: h?.cc || '',
     city: h?.city || '',
     lat: h?.lat ?? null,

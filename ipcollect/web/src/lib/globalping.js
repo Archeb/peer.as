@@ -17,7 +17,6 @@
 
 import { ccLabel, asnName } from './bgp.js'
 import { resolveGeo, resolveGeoBatch, measurementUrl } from './geo-resolve.js'
-import { traceAsName } from './trace-overrides.js'
 
 const API = 'https://api.globalping.io/v1'
 
@@ -180,7 +179,7 @@ function mkHop(idx, ip, g, rtt, loss, isTarget, name, asn, rdns) {
   g = g || {}   // 私网 / 无效地理: 无 geo 对象, 仅保留 idx/ip/asn/rtt, 坐标置空(不落地球)
   return {
     // rdns 与 ip 相同(无 PTR, globalping 回填了地址本身)视为无 rdns → 前端只显示 IP, 不加括号。
-    idx, ip: ip || null, asn: asn ?? g.asn ?? 0, name: traceAsName(ip, name || asnName(g.asn)), rdns: (rdns && rdns !== ip) ? rdns : '',
+    idx, ip: ip || null, asn: asn ?? g.asn ?? 0, name: name || asnName(g.asn) || '', rdns: (rdns && rdns !== ip) ? rdns : '',
     cc: g.cc || '', city: g.city || '', lat: g.lat ?? null, lon: g.lon ?? null,
     rtt: rtt == null ? null : rtt, loss: Math.round(loss || 0), isTarget: !!isTarget,
   }
