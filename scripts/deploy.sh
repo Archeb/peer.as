@@ -2,8 +2,8 @@
 # scripts/deploy.sh — PEER.AS 唯一部署入口（cron / 手动 / 开发都走这里，结果完全一致）。
 # 用法: scripts/deploy.sh [--data|--data-light] [--no-build] [--cf-only|--cn-only]
 #   (无 flag)    build 前端 + 部署两端（复用现有 dist/data）   —— 改了前端后推送 / 只动前端
-#   --data       先 ingest --reset(全量 4 采集点) + export-parquet 重建数据 —— daily refresh / 全重推
-#   --data-light 仅重灌 REFRESH_ONLY(默认 route-views2 每 2h) + export —— 增量轻刷新, 需先 --data 打底
+#   --data       先 ingest --reset(4 个公开全表源 + 已配置私有源) + export-parquet —— daily refresh / 全重推
+#   --data-light 仅重灌高频源(route-views2 + 已配置的 AS4837 私有源) + export —— 增量轻刷新
 #   --no-build   跳过 npm build，用现有 web/dist（少用；纯重新部署现有 dist）
 #   --cf-only / --cn-only   只部署一端（默认 CF + CN 两端都部署）
 # 设计：数据(ingest+export)、前端(build)、部署(CF+CN) 三段；部署核心只实现这一份。
@@ -24,15 +24,19 @@ scripts/deploy.sh — PEER.AS 唯一部署入口（cron / 手动 / 开发都走�
 用法: scripts/deploy.sh [--data|--data-light] [--no-build] [--cf-only|--cn-only]
   (无 flag)    build 前端 + 部署两端（复用现有 dist/data）       改了前端后推送 / 只动前端
   --data       ingest --reset(全量) + export-parquet 重建数据，再 build + 部署   daily refresh / 全重推
-  --data-light 仅重灌 REFRESH_ONLY(默认 route-views2) + export   增量轻刷新, 需先 --data 打底
+  --data-light 仅重灌 REFRESH_ONLY(默认 route-views2 + 已配置 AS4837 私有源) + export
   --no-build   跳过 npm build，用现有 web/dist（纯重新部署现有 dist）
   --cf-only / --cn-only   只部署一端（默认 CF + CN 两端）
 EOF
 }
 
 WITH_DATA=0; WITH_DATA_LIGHT=0; DO_BUILD=1; TARGET=both
-# 增量轻刷新只重灌发布周期短的采集点(默认 route-views2 每 2h); 其余采集点 obs 原样保留。可用 REFRESH_ONLY 覆盖。
-REFRESH_ONLY="${REFRESH_ONLY:-route-views2}"
+# 增量轻刷新只重灌发布周期短的采集点；AS4837 URL 存在时自动随 route-views2 刷新。
+# 显式设置 REFRESH_ONLY 时完全尊重调用方，不自动追加。
+if [ -z "${REFRESH_ONLY+x}" ]; then
+  REFRESH_ONLY="route-views2"
+  [ -n "${IPC_MRT_AS4837_RIB_URL:-}" ] && REFRESH_ONLY="$REFRESH_ONLY,as4837-us"
+fi
 for a in "$@"; do case "$a" in
   --data)       WITH_DATA=1 ;;
   --data-light) WITH_DATA_LIGHT=1 ;;

@@ -18,8 +18,12 @@ from . import bgp, store, util
 
 
 def _open_mrt(path: str):
-    """按扩展名选解压: dn42 GRC 是 .bz2, RIPE RIS 是 .gz。两者都是流式只读。"""
-    return bz2.open(path, "rb") if path.endswith(".bz2") else gzip.open(path, "rb")
+    """按扩展名选读取方式；支持 bz2/gzip 及私有源的未压缩 .mrt。"""
+    if path.endswith(".bz2"):
+        return bz2.open(path, "rb")
+    if path.endswith(".gz"):
+        return gzip.open(path, "rb")
+    return open(path, "rb")
 
 # MRT / TABLE_DUMP_V2 常量
 MRT_TABLE_DUMP_V2 = 13
@@ -41,16 +45,58 @@ def collectors(cfg: dict) -> list[str]:
     cs = cfg.get("mrt_collectors") or []
     if not cs and cfg.get("mrt_collector"):
         cs = [cfg["mrt_collector"]]
-    return [c for c in cs if c]
+    out = [c for c in cs if c]
+    # URL 存在才启用私有源；未配置的开源复现环境保持原有 4 源。
+    if os.environ.get("IPC_MRT_AS4837_RIB_URL", "").strip() and PRIVATE_COLLECTOR not in out:
+        out.append(PRIVATE_COLLECTOR)
+    return out
 
 
-# RouteViews 归档默认根。采集点名以 "route-views" 开头者走 RouteViews 布局, 否则走 RIPE RIS。
+# RouteViews 归档默认根。私有源的连接与凭据只从环境变量读。
 ROUTEVIEWS_BASE = "https://archive.routeviews.org"
+PRIVATE_COLLECTOR = "as4837-us"
+PRIVATE_FEEDER_ASN = 65311
+
+
+def _private_source(name: str) -> Optional[dict]:
+    """AS4837 私有 RIB 源；不把 URL/凭据写入 config 或发布数据。"""
+    if name != PRIVATE_COLLECTOR:
+        return None
+    rib_url = os.environ.get("IPC_MRT_AS4837_RIB_URL", "").strip()
+    if not rib_url:
+        return None
+    return {
+        "rib_url": rib_url.rstrip("/") + "/",
+        "username": os.environ.get("IPC_MRT_AS4837_USERNAME", ""),
+        "password": os.environ.get("IPC_MRT_AS4837_PASSWORD", ""),
+        "verify": os.environ.get("IPC_MRT_AS4837_VERIFY", "0").lower() in {"1", "true", "yes"},
+    }
+
+
+def _request_kwargs(name: Optional[str] = None, url: str = "") -> dict:
+    """仅对已配置的私有根 URL 添加 Basic Auth 与 TLS 选项。"""
+    src = _private_source(name or PRIVATE_COLLECTOR)
+    if not src or (not name and not url.startswith(src["rib_url"])):
+        return {}
+    if not src["verify"]:
+        import urllib3
+        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+    auth = (src["username"], src["password"]) if src["username"] else None
+    return {"auth": auth, "verify": src["verify"]}
 
 
 def collector_source(name: str) -> str:
-    """按采集点名判定来源: route-views* -> RouteViews; rrc* / 其他 -> RIPE RIS。"""
+    """按采集点名判定来源类型。"""
+    if name == PRIVATE_COLLECTOR:
+        return "private"
     return "routeviews" if name.startswith("route-views") else "ris"
+
+
+def collector_public_meta(name: str) -> dict:
+    """可发布的采集点信息；私有源不暴露内部标识、URL 或供应细节。"""
+    if name == PRIVATE_COLLECTOR:
+        return {"name": "AS4837", "src": "private", "location": ["United States", "美国"]}
+    return {"name": name, "src": collector_source(name)}
 
 
 def _latest_in_months(murl_for, file_re: str, months: list[str], where: str) -> str:
@@ -65,6 +111,14 @@ def _latest_in_months(murl_for, file_re: str, months: list[str], where: str) -> 
 
 def latest_bview_url(cfg: dict, collector: Optional[str] = None) -> str:
     coll = collector or cfg.get("mrt_collector") or (collectors(cfg) or ["rrc01"])[0]
+
+    private = _private_source(coll)
+    if private:
+        root = private["rib_url"]
+        files = _list_links(root, r"rib-AS4837-\d{8}-\d{4}\.mrt", coll)
+        if not files:
+            raise RuntimeError(f"无法在私有源 {coll} 列出 RIB 文件")
+        return root + sorted(files)[-1]
 
     if collector_source(coll) == "routeviews":
         # RouteViews: <base>/<coll>/bgpdata/<YYYY.MM>/RIBS/rib.<date>.<time>.bz2(每 2h 一份)。
@@ -86,16 +140,17 @@ def latest_bview_url(cfg: dict, collector: Optional[str] = None) -> str:
                              r"bview\.\d{8}\.\d{4}\.gz", months, root)
 
 
-def _list_links(url: str, pattern: str) -> list[str]:
+def _list_links(url: str, pattern: str, collector: Optional[str] = None) -> list[str]:
     import re
     import requests
 
-    r = requests.get(url, timeout=30)
+    r = requests.get(url, timeout=30, **_request_kwargs(collector, url))
     r.raise_for_status()
     return sorted(set(re.findall(pattern, r.text)))
 
 
-def download(url: str, dest: Optional[str] = None, force: bool = False, retries: int = 5) -> str:
+def download(url: str, dest: Optional[str] = None, force: bool = False, retries: int = 5,
+             collector: Optional[str] = None) -> str:
     """下载到 dest, 支持**断点续传 + 重试**(RIPE 大 RIB 易中途断流)。
     续传: .part 已有字节则发 Range 续; 服务器不支持(回 200)则从头。重试间隔退避。"""
     import requests
@@ -107,7 +162,7 @@ def download(url: str, dest: Optional[str] = None, force: bool = False, retries:
     if os.path.exists(dest) and not force:
         remote, rv = 0, ""
         try:
-            head = requests.head(url, timeout=30)
+            head = requests.head(url, timeout=30, **_request_kwargs(collector, url))
             remote = int(head.headers.get("content-length", 0))
             rv = head.headers.get("etag") or head.headers.get("last-modified") or ""
         except Exception:
@@ -133,7 +188,8 @@ def download(url: str, dest: Optional[str] = None, force: bool = False, retries:
         got = os.path.getsize(tmp) if os.path.exists(tmp) else 0
         headers = {"Range": f"bytes={got}-"} if got else {}
         try:
-            with requests.get(url, stream=True, timeout=120, headers=headers) as r:
+            with requests.get(url, stream=True, timeout=120, headers=headers,
+                              **_request_kwargs(collector, url)) as r:
                 if got and r.status_code == 200:   # 服务器忽略 Range -> 从头重写
                     got = 0
                 elif got and r.status_code == 416:  # 已下全(range 越界) -> 当作完成
@@ -344,7 +400,7 @@ def _snap_ts(url: str) -> Optional[int]:
     供 meta 记录**各采集点数据的真实时龄**(不同采集点发布周期不同, 见 AGENTS『2h 刷新』)。"""
     import calendar
     import re as _re
-    m = _re.search(r"(\d{8})\.(\d{4})", os.path.basename(url))
+    m = _re.search(r"(\d{8})[.-](\d{4})", os.path.basename(url))
     if not m:
         return None
     try:
@@ -380,6 +436,9 @@ def _parse_to_csv(mrt_file: str, collector: str, family: Optional[int],
         dedup: dict[str, list] = {}   # path_raw -> [path_clean, raw_len, origin, n_peers]
         for p in rec["paths"]:
             asns = p["asns"]
+            # 私有采集器通过本地 AS65311 与 AS4837 建邻接；该本地首跳不是公网 AS_PATH 的一部分。
+            if collector == PRIVATE_COLLECTOR and asns and asns[0] == PRIVATE_FEEDER_ASN:
+                asns = asns[1:]
             if not asns:
                 continue
             clean = bgp.clean_path(asns)
@@ -406,7 +465,7 @@ def _parse_to_csv(mrt_file: str, collector: str, family: Optional[int],
 def _download_and_parse(collector: str, url: str, dest: str,
                         family: Optional[int], limit: Optional[int]) -> tuple[str, str, int, int]:
     """子进程任务: 下载 + 解析 -> CSV。返回 (collector, csv_path, 前缀数, obs 行数)。不碰 DuckDB。"""
-    mf = download(url, dest=dest)
+    mf = download(url, dest=dest, collector=collector)
     csv_path, n_prefix, n_rows = _parse_to_csv(mf, collector, family, limit)
     return collector, csv_path, n_prefix, n_rows
 
@@ -521,7 +580,7 @@ def ingest(
 
     if len(tasks) <= 1:
         for c, u, dest in tasks:
-            mf = download(u, dest=dest) if u is not None else dest
+            mf = download(u, dest=dest, collector=c) if u is not None else dest
             csv_path, p, r = _parse_to_csv(mf, c, family, limit)
             _load(c, u, csv_path, p, r)
     else:

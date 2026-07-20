@@ -5,4 +5,10 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PY="$HERE/.venv/bin/python"
 [ -x "$PY" ] || PY="python3"
 export IPC_HOME="$HERE"
+# 本地私有数据源/部署变量统一放 .env；启动器自动导出，手动 ./ipc 与 deploy.sh 行为一致。
+if [ -f "$HERE/.env" ]; then
+  set -a
+  . "$HERE/.env"
+  set +a
+fi
 exec "$PY" -m ipcollect "$@"

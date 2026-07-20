@@ -8,7 +8,8 @@
 
 自研 CLI `ipc`（python 包 `ipcollect/`，用同目录 `.venv`）+ 纯静态 Web 看板 **PEER.AS（全球 BGP Insights）**。
 
-从 **4 采集点**（RIPE RIS `rrc01`/`rrc06`/`rrc03` + RouteViews `route-views2`）MRT **全表（IPv4+IPv6）** 静态分析回程 AS_PATH，
+从 **4 个公开全表采集点**（RIPE RIS `rrc01`/`rrc06`/`rrc03` + RouteViews `route-views2`）
+及可选的 **AS4837 美国私有视角** MRT（IPv4+IPv6）静态分析回程 AS_PATH，
 **入库 = 全球全部 v4+v6 前缀**（不按 ASN/国家过滤），用 **DuckDB 工作库**去重，导出 **Parquet** 数据集，
 **DuckDB-WASM 在浏览器里直查静态 Parquet**（全 GET 整片下载、无 Range、无后端）。
 
@@ -18,7 +19,7 @@
 
 ## 运行入口
 
-仓库根用 `./ipc <子命令>`（启动器自动走 `.venv`，数据/缓存落本目录）。主要子命令：
+仓库根用 `./ipc <子命令>`（启动器自动走 `.venv`、加载 gitignored `.env`，数据/缓存落本目录）。主要子命令：
 `init`/`config`/`geo-import`/`ingest`/`export-parquet`/`build`/`sync-web`/`serve`。
 （查询类 CLI 已退役；调试直接用 DuckDB 查工作库或 parquet。）
 
@@ -27,7 +28,7 @@
 - `cli.py` — `ipc` 子命令入口（argparse）。
 - `config.py` — `DEFAULT_CONFIG` + `load/save`；`mrt_collectors`/`geolite_*` 等集中在此。`asn_registry` 唯一权威源 = `ipcollect/data/asn_registry.csv`（CSV，可直接 PR，改即生效、不写回 config.json）。
 - `bgp.py` — AS_PATH 清洗/邻接、ASN 命名、`path_contains_seq`（**连续子序列**）。
-- `mrt.py` — 流式 MRT RIB 解析（v4+v6）+ 断点续传下载；按采集点名自动选 RIS/RouteViews 布局；`ingest()` 全表去重写工作库。
+- `mrt.py` — 流式 MRT RIB 解析（v4+v6，含未压缩 `.mrt`）+ 断点续传下载；自动选 RIS/RouteViews/私有 AS4837 布局；`ingest()` 去重写工作库。AS4837 的 URL/Basic Auth 只走 `.env`，首跳本地 ASN 65311 在入库前剥离。
 - `store.py` — **DuckDB 工作库**：连接、`obs`/`meta` 表、CSV 流式灌入、`finalize`（去重 → `pathobs`/`prefix`）。
 - `geoip.py` — GeoLite 过期检查/下载、`build_geo`（三轨合并非重叠区间 + AS org）、按 family 内存 bisect 的 geo 索引。
 - `parquet_export.py` — **主发布步骤**（`ipc export-parquet`）：读工作库出两套 Parquet（`prefixes`/`paths`/`pathsearch`/`byorigin`/`geo` 等，v4+v6）+ `asnames.json`/`asnorg.json` + `meta.json`，调 `ssg`，拷前端。
@@ -72,7 +73,7 @@
 ## 数据维护命令
 
 ```bash
-./ipc ingest --reset            # 下载 4 采集点最新 RIB, 全表 v4+v6 入 DuckDB。改采集点后必须重跑
+./ipc ingest --reset            # 下载 4 个公开全表源 + 已配置私有源的最新 RIB，v4+v6 入 DuckDB
 ./ipc ingest --only route-views2 # 增量: 只重灌列出的采集点(其余 obs 保留, finalize 仍全量合并)。需先 --reset 打底
 ./ipc export-parquet --out dist # 工作库 -> dist/data/parquet + meta.json + SSG（约 3-5min）。主发布步骤
 ./ipc build                     # 只改前端时: npm run build + 拷 web/dist -> dist/（秒级, 不碰数据）
@@ -80,7 +81,8 @@
 ```
 
 - **ingest 按采集点并行解析**（进程池绕 GIL, fork 上下文; 子进程纯解析不碰 DuckDB, 父进程串行灌库）：
-  4 采集点墙钟 = 最慢单点(~12min) 而非相加(~27min)。DuckDB 线程默认吃满核(`min(8,核数)`, 可 `IPC_DUCKDB_THREADS` 调小)。
+  多采集点墙钟 = 最慢单点(~12min) 而非相加。DuckDB 线程默认吃满核(`min(8,核数)`, 可 `IPC_DUCKDB_THREADS` 调小)。
+- **AS4837 私有源**：`.env` 配 `IPC_MRT_AS4837_RIB_URL/USERNAME/PASSWORD` 即启用，`VERIFY=0` 为忽略私有 HTTPS 证书（默认）；公开 `meta.json` 仅显示 `AS4837` / `美国`，绝不输出 URL/凭据/内部采集标识。该源是 AS4837 专用视角（不是 DFZ 全表），只消费 `rib/`，不消费增量不连续的 `updates/`。
 - **各采集点真实快照时刻**记进 meta `mrt_snap_<collector>`(RIB 文件名的 UTC 时刻) / `ingest_ts_<collector>`(本机灌入时刻)——
   采集点发布周期不同(RIS bview 8h / RouteViews RIB 2h)故时龄天然不齐, 这是多视角 BGP 语义、非 bug; meta 留作透明化。
 
@@ -137,7 +139,7 @@ DuckDB-WASM、Cache Storage 大 wasm 缓存、parquet 扩展自托管、全 GET 
 
 - **全量** `40 0,8,16 * * *  …/daily-refresh.sh`（每 8h，对齐 RIPE RIS bview UTC 00/08/16 + 40min）。
 - **轻量** `40 2,4,6,10,12,14,18,20,22 * * *  …/daily-refresh.sh --data-light`（其余偶数点 +40min，每 2h 刷 route-views2，对齐 RouteViews 2h RIB）。
-  净效果：**route-views2 视角 ≤2h 新鲜，RIS 视角 ≤8h**（采集点发布周期不同，时龄不齐是常态，见「数据维护命令」）。
+  净效果：**route-views2 / 已配置 AS4837 视角 ≤2h 新鲜，RIS 视角 ≤8h**（采集点发布周期不同，时龄不齐是常态，见「数据维护命令」）。
 
 `flock`(deploy.sh 内) 防并发：轻量若撞上未跑完的全量会自动跳过。日志按 full/light 分桶轮转。改 cron 用 `fcrontab -` stdin 灌入（直接 `fcrontab 文件` 在无 tty 下会段错误）。wrangler OAuth 过期会让 CF 步失败 → 重 `wrangler login`。
 > **传播**：`--data-light` 依赖主 checkout 已拉到含该 flag 的代码；首次 cron 触发时旧 `daily-refresh.sh` 会忽略参数跑全量，deploy.sh 自身 GitOps ff 更新工作树后，下一次轻量即生效（自愈）。

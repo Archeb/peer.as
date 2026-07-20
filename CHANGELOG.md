@@ -6,6 +6,11 @@ PEER.AS 的功能更新记录。仅记录**面向用户的功能性变更**（�
 Feature-level changelog for PEER.AS. Only **user-facing functional changes** are listed
 (new features, visible behavior changes); pure maintenance/refactors/data refreshes are omitted. Newest first.
 
+## 2026-07-12
+
+- **改进：新增 AS4837 美国路由视角。** 在原有 4 个公开全表采集点之外，新增 AS4837 美国网络内部视角，补充其可见前缀的回程 AS_PATH；数据源列表同时展示各视角的快照新鲜度。
+  **Improved: added an AS4837 US routing perspective.** Alongside the four public full-table collectors, an internal AS4837 US perspective now adds back-haul AS_PATH visibility for its observed prefixes; the source list also shows snapshot freshness for each perspective.
+
 ## 2026-07-11
 
 - **新增：NextTrace 路径分享卡。** 分享 `peer.as/trace?nt=<id>` 时，社交预览现在以极简路径图展示去重后的地理位置、逐跳 ASN 与运营商，并在过长路径中自动折叠中间跳点。

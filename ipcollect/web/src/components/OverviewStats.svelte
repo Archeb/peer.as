@@ -30,8 +30,8 @@
     'route-views2': ['Oregon', '俄勒冈'], 'route-views3': ['San Jose', '圣何塞'],
     'route-views4': ['Sydney', '悉尼'], 'route-views6': ['Eugene', '尤金'],
   }
-  const srcLabel = s => s === 'routeviews' ? 'RouteViews' : 'RIPE RIS'
-  const locLabel = c => { const l = LOC[c.name]; return l ? (S.lang === 'zh' ? l[1] : l[0]) : '' }
+  const srcLabel = s => s === 'routeviews' ? 'RouteViews' : s === 'ris' ? 'RIPE RIS' : ''
+  const locLabel = c => { const l = c.location || LOC[c.name]; return l ? (S.lang === 'zh' ? l[1] : l[0]) : '' }
 
   // 数据新鲜度(按快照时刻): <3h=live(青) / <12h=aging(琥珀) / 更久=stale / 无=na。
   function freshness(ts) {
@@ -71,7 +71,7 @@
         <li>
           <span class="dot" data-f={freshness(c.snap_ts)} title={genUtc(c.snap_ts) || t('ov_na')}></span>
           <span class="cname">{c.name}</span>
-          <span class="cmeta">{srcLabel(c.src)}{#if locLabel(c)} · {locLabel(c)}{/if}</span>
+          <span class="cmeta">{srcLabel(c.src)}{#if srcLabel(c.src) && locLabel(c)}{' · '}{/if}{locLabel(c)}</span>
           <span class="cago" title={c.snap_ts ? `${t('ov_snap')} ${genUtc(c.snap_ts)}` : t('ov_na')}>
             {c.snap_ts ? genAgo(c.snap_ts) : t('ov_na')}
           </span>

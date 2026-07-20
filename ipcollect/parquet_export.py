@@ -796,15 +796,15 @@ def export(cfg: dict, con, out_dir: str = "dist") -> dict:
     n_segs_total = sum(fam_results[f]["n_segs"] for f in families)
     now = int(time.time())
     # 采集点(vantage points)元信息: 各采集点的真实快照时刻(mrt_snap_<c>, RIB 文件名 UTC) + 本机灌入时刻
-    # (ingest_ts_<c>) + 来源(ris/routeviews)。供前端 idle 区按采集点显示「各数据源更新时间」。
+    # (ingest_ts_<c>) + 来源(ris/routeviews/private)。供前端 idle 区按采集点显示「各数据源更新时间」。
     # 发布周期不同(RIS bview 8h / RouteViews RIB 2h)故时龄天然不齐, 这是多视角 BGP 语义。
-    _coll_names = [c for c in (cfg.get("mrt_collectors") or [cfg.get("mrt_collector")]) if c]
+    _coll_names = mrt.collectors(cfg)
     collectors_meta = []
     for _c in _coll_names:
         _snap = store.get_meta(con, f"mrt_snap_{_c}")
         _ing = store.get_meta(con, f"ingest_ts_{_c}")
         collectors_meta.append({
-            "name": _c, "src": mrt.collector_source(_c),
+            **mrt.collector_public_meta(_c),
             "snap_ts": int(_snap) if _snap else None,
             "ingest_ts": int(_ing) if _ing else None,
         })
