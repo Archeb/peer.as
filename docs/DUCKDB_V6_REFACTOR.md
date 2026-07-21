@@ -80,7 +80,7 @@ v6 给 128 位、v4 给 ≤32 位,**统一用 HUGEINT 存 `ip_start`/`ip_end`**�
 - ingest 对每个 collector 各取最新 bview、各自解析,**全部观测灌进同一张 `obs` 表**,带 `collector` 列。
 - **去重在 `GROUP BY` 时跨 collector 合并**:`n_peers = count(DISTINCT collector || '|' || peer_ip)`
   (= 多少个不同 vantage 观测到这条 path,跨两采集点)。可另存 `n_collectors` 备分析。
-- **best path / `is_best`**:仍按 `n_peers` 降序取 `rn=1`(跨两点观测最多的路径置顶★),语义自然延续。
+- **代表观测路径 / `is_best`**:按 `n_peers DESC, path_len ASC, path string ASC` 稳定取 `rn=1`，仅供详情/路由图选取一条完整代表路径；不得称为“全球最优”或“实际流量路径”。AS_PATH 搜索主导性按所有匹配路径的 peer 观测权重之和计算。
 - **DFZ 可见性 `dfz_ref`**:`n_paths`(观测到该前缀的 peer 数)基准会因双采集点而变,**v4/v6 各自重算
   `dfz_ref`**(v6 的全网 peer 数远少于 v4,不能共用阈值)。
 
@@ -161,7 +161,7 @@ asn_dim(asn BIGINT, name VARCHAR, org VARCHAR, op VARCHAR)
 - `prefixes/`(v4) · `prefixes_v6/`:`pid, prefix, ip_start(HUGEINT), ip_end, plen, origin_asn, n_paths, …`
 - `paths/`(v4) · `paths_v6/`:`pid, path_str, path_arr, path_len, n_peers, is_best`
 - `pathsearch`(v4,按 origin_asn 排序 + 区间索引) · `pathsearch_v6`:同结构(**v6 也按 origin 排序写小分片**,
-  保留"origin AS 搜索只读 1 个文件"的性能优化)
+  含记录内嵌 peer 权重的 `paths_blob` 与 `observed_peers`，保留"origin AS 搜索只读 1 个文件"的性能优化)
 - `geo/<cc>/*.parquet`(v4) · `geo/<cc>/*_v6.parquet`
 - `meta.json`:扩展 —— `files.prefixes_v6 / paths_v6 / pathsearch_v6 / pathsearch_v6_origin`、
   `dfz_ref_v6`、`counts.{v4,v6}`、`collectors:["rrc01","rrc06"]`;`version` 哈希纳入 v6 文件清单

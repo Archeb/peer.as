@@ -37,8 +37,8 @@
         <li><code>!N</code> {zh ? '或 ' : 'or '}<code>-N</code> {zh ? '= 排除经过 ASN N' : '= exclude ASN N'}</li>
       </ul>
       <p class="disc">{zh
-        ? '通配/排除只在该前缀已采集的去重路径（每前缀最多 24 条最优路径）内判定；序列匹配始终锁定在同一条路径内。'
-        : 'Wildcards/exclusions are evaluated over the prefix’s collected distinct paths (top 24 per prefix); sequence matching always stays within a single path.'}</p>
+        ? '通配/排除只在该前缀已导出的去重路径（每前缀最多 128 条）内判定；序列匹配始终锁定在同一条路径内。结果按匹配路径的 peer 观测占比排序。'
+        : 'Wildcards/exclusions are evaluated over the prefix’s exported distinct paths (up to 128 per prefix); sequence matching always stays within a single path. Results are ranked by the peer-observation share of matching paths.'}</p>
     </div>
   </div>
 {/if}

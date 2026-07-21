@@ -30,12 +30,12 @@
 **实测**：duckdb 不支持 PARTITION_BY+FILE_SIZE 同用，而 CF Pages 25MiB/文件硬限必须切文件 →
 **改为按键排序 + 20MB 切文件**(不用 Hive 分区)，靠 parquet row-group 的 min/max 做 Range 行级裁剪。
 - `geo/`：**国家 working-set 表**(选国家=只拉该 cc row-group, 之后过滤 in-browser SQL 下推)。一行=(pid,cc,
-  city)。列：`cc,city,province,pid,prefix,plen,origin_asn,n_paths,segs(list<struct s,e>),paths_blob,best_path`。
-  **按 cc 排序**。`paths_blob`='|'拼接的去重路径(≤PATH_CAP, 每路径带空格边界)供连续序列 `LIKE '% a b %'`。
+  city)。列：`cc,city,province,pid,prefix,plen,origin_asn,n_paths,segs,paths_blob,observed_peers,best_path`。
+  **按 cc 排序**。`paths_blob`='|'拼接的去重路径(≤PATH_CAP)，每条记录为 `@n_peers@ path`，供连续序列匹配及加权计票。
   CN 等 focus 国家=城市级(多行/pid); 其余=国家级(city NULL)。
 - `prefixes/`：**按 ip_start 排序**(不分区)。列 `pid,prefix,ip_start,ip_end,plen,family,origin_asn,
   n_origins,n_paths,cc,province,city`。子网搜索/父子段(范围自连接)/pid 详情。即 ipindex。
-- `paths/`：**按 pid 排序**。列 `pid,path_str,path_arr(int[]),path_len,n_peers,is_best`。insight 全量路径。
+- `paths/`：**按 pid 排序**。列 `pid,path_str,path_arr(int[]),path_len,n_peers,is_best`。`is_best` 仅表示稳定选出的代表观测路径，不代表全球流量；insight 展示全量路径。
 - `asn_dim.parquet`：`asn,name,op`(config.asn_registry 精选高亮)。
 - carve：`_build_segments` = `_forest`+`_subtract`(有效路由=自身−更具体子段)+`GeoIndex.carve_cc`;
   focus 国家保留 city、其余合并国家级。`meta.json`：dfz_ref + counts + countries + country_names(zh)/
@@ -44,7 +44,7 @@
 ## Phase 3 — 前端 DuckDB-WASM（`web/app.js`）
 - 懒加载 `@duckdb/duckdb-wasm@1.32.0`(jsDelivr ESM + blob-worker 跨域 shim)；首屏 `meta.json` 秒开。
 - 查询(远端 parquet Range)：`geo WHERE cc=? [AND city=?] [AND paths_blob LIKE ?] [AND n_paths>=lowcut]
-  ORDER BY (best_path LIKE ?) DESC, n_paths DESC`；子网 `prefixes WHERE ip_start<=:ip AND ip_end>=:ip`；
+  匹配观测占比 = `sum(blob 里匹配记录的内嵌 peer 权重) / observed_peers`，按占比、匹配 peer 数、总可见度降序；子网 `prefixes WHERE ip_start<=:ip AND ip_end>=:ip`；
   insight `paths WHERE pid=?`；父子段 `prefixes` 范围自连接；低可见 `n_paths<0.2*dfz_ref`。
 - 导航 国家→城市(focus)；CN+境外高亮 preset。**i18n**：`Intl.DisplayNames` 出双语国名 + STRINGS 切 UI。
 - 验证：duckdb python 跑**同款 SQL** 对拍；浏览器运行态无法 headless 验证(已知缺口)。

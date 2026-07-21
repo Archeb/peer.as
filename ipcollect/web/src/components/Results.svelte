@@ -2,7 +2,7 @@
   import Fa from 'svelte-fa'
   import { S } from '../lib/store.svelte.js'
   import { t } from '../lib/i18n.js'
-  import { isLowVis, parseBest, parseSeq, ccLabel, placeLabel } from '../lib/bgp.js'
+  import { isLowVis, parseBest, ccLabel, placeLabel } from '../lib/bgp.js'
   import { sortRows, showInsight, closeInsight } from '../lib/queries.js'
   import { iStar, iSignal, iChevD, iChevR } from '../lib/icons.js'
   import AsnTag from './AsnTag.svelte'
@@ -13,7 +13,8 @@
   // DMIT 赞助 logo(本地 public/dmit.svg)。绝对化以适配任意部署根(同 db.js 的做法)。
   const DMIT = new URL('./dmit.svg', document.baseURI).href
 
-  let hasPath = $derived(parseSeq(S.filters.path).length > 0)
+  let hasPath = $derived((S.filters.path || '').trim().length > 0)
+  let weightedPath = $derived(hasPath && !!S.meta?.has_path_weights)
   let cols = $derived(4 + (hasPath ? 1 : 0)) // prefix, origin, loc, #path (+seg col always) (+match)
 
   function rowClick(r) {
@@ -21,6 +22,10 @@
     else showInsight(r.pid, r.prefix)
   }
   const loc = r => placeLabel(r.province, r.city, r.cc)
+  const pct = r => {
+    const n = Number(r.match_ratio) || 0
+    return (n * 100).toLocaleString(S.lang === 'zh' ? 'zh-CN' : 'en-US', { maximumFractionDigits: n < .01 ? 2 : 1 }) + '%'
+  }
   function arrow(key) { return S.sortKey === key ? (S.sortDir < 0 ? '▾' : '▴') : '' }
 </script>
 
@@ -34,7 +39,7 @@
           <th onclick={() => sortRows('city')}>{t('col_loc')} <span class="ar">{arrow('city')}</span></th>
           <th class="num" onclick={() => sortRows('n_paths')}>{t('col_path')} <span class="ar">{arrow('n_paths')}</span></th>
           <th class="nosort">{t('col_seg')}</th>
-          {#if hasPath}<th class="nosort">{t('col_match')}</th>{/if}
+          {#if hasPath}<th class:ns={!weightedPath} onclick={() => weightedPath && sortRows('match_ratio')}>{t('col_match')} <span class="ar">{weightedPath ? arrow('match_ratio') : ''}</span></th>{/if}
         </tr>
       </thead>
       <tbody>
@@ -54,7 +59,11 @@
             <td class="seg">{#if r.segs && r.segs.length}<span class="segn">{r.segs.length}</span>{/if}</td>
             {#if hasPath}
               <td class="match">
-                {#if r.best_path}
+                {#if weightedPath}
+                  {#if r._dominant}<span class="star" title={t('match_majority')}><Fa icon={iStar} /></span>{/if}
+                  <span class="ratio" title={t('match_hint')}><b>{r.matched_peers ?? 0}</b>/{r.observed_peers ?? 0}</span>
+                  <span class="pct">{pct(r)}</span>
+                {:else if r.best_path}
                   {#if r._best}<span class="star"><Fa icon={iStar} /></span>{/if}
                   <AsPath asns={parseBest(r.best_path)} dim={!r._best} />
                 {/if}
@@ -100,7 +109,7 @@
     font: 700 10.5px var(--sans); letter-spacing: .04em; text-transform: uppercase;
     cursor: pointer; border-bottom: 1px solid var(--line); user-select: none;
   }
-  thead th.nosort { cursor: default; }
+  thead th.nosort, thead th.ns { cursor: default; }
   th.num, td.num { text-align: right; }
   .ar { color: var(--accent); }
   tbody tr.prow { cursor: pointer; }
@@ -121,6 +130,9 @@
     border: 1px solid var(--line); border-radius: 4px; padding: 1px 6px;
   }
   .match .star { color: var(--signal); margin-right: 4px; }
+  .match .ratio { font-family: var(--mono); color: var(--fg); }
+  .match .ratio b { color: var(--signal); }
+  .match .pct { font: 10px var(--mono); color: var(--muted); margin-left: 6px; }
   tr.segrow td { background: var(--alt); padding: 9px 12px 11px; box-shadow: inset 3px 0 0 var(--accent); }
   .seghdr { font-size: 11px; color: var(--muted); margin-bottom: 6px; }
   .segs { display: flex; flex-wrap: wrap; gap: 4px 12px; }

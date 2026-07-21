@@ -341,13 +341,34 @@ export function parsePathQuery(str) {
   const wildcard = norm.some(x => x === '*' || typeof x === 'object')
   return { include: norm, nums, excludes, wildcard, hasInclude: norm.length > 0, reSource: norm.length ? _reSource(norm) : null }
 }
-// 编译查询: 提供 SQL 条件、best-path 排序表达式、单路径 JS 匹配、状态栏摘要。
+// 编译查询: 提供 prefix 级快速过滤、单路径加权匹配、单路径 JS 匹配、状态栏摘要。
 export function compilePathQuery(str) {
   const q = parsePathQuery(str)
   const empty = !q.hasInclude && !q.excludes.length
   const re = q.reSource ? new RegExp(q.reSource) : null
   return {
     ...q, empty,
+    // 单条路径的完整条件。排除项必须与 include 在**同一条路径**内判断；这是加权计票的事实口径。
+    sqlPathCond(col) {
+      const c = []
+      if (q.hasInclude) c.push(q.wildcard
+        ? `regexp_matches(${col}, ${sqlStr(q.reSource)})`
+        : `${col} LIKE ${sqlStr('% ' + q.nums.join(' ') + ' %')}`)
+      for (const x of q.excludes) c.push(`${col} NOT LIKE ${sqlStr('% ' + x + ' %')}`)
+      return c.length ? c.join(' AND ') : 'TRUE'
+    },
+    // 加权 blob 的每条记录形如 "@n_peers@ path"；筛出匹配路径后解析并汇总其 peer 权重。
+    sqlMatchedPeers(pathsCol) {
+      const cond = this.sqlPathCond('x')
+      return `COALESCE(list_sum(list_transform(list_filter(string_split(${pathsCol}, '|'), x -> ${cond}), x -> TRY_CAST(split_part(x, '@', 2) AS BIGINT))), 0)`
+    },
+    // 加权表达式较重；有 include 时先用 blob 做便宜的存在性预筛。排除项留给单路径条件处理。
+    sqlIncludeCond(col) {
+      if (!q.hasInclude) return null
+      return q.wildcard
+        ? `regexp_matches(${col}, ${sqlStr(q.reSource)})`
+        : `${col} LIKE ${sqlStr('% ' + q.nums.join(' ') + ' %')}`
+    },
     // WHERE 条件数组(作用于给定列, 通常 'paths_blob')
     sqlConds(col) {
       const c = []
@@ -357,7 +378,7 @@ export function compilePathQuery(str) {
       for (const x of q.excludes) c.push(`${col} NOT LIKE ${sqlStr('% ' + x + ' %')}`)
       return c
     },
-    // best_path 命中 include -> 置顶★(排序用); 无 include 返回 null
+    // 旧数据回退：代表路径命中 include 时置顶。新数据不再用它判断主导性。
     sqlBest(bestCol) {
       if (!q.hasInclude) return null
       return q.wildcard

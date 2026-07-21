@@ -156,15 +156,29 @@ export async function runSearch(keepPage = false) {
     cols = `pid, prefix, cc, origin_asn,${statSel}${moasCol} n_paths, best_path`
     shardCount = psFiles.length
   }
-  if (hasPath) for (const c of pq.sqlConds('paths_blob')) w.push(c)
+  // 新数据按「所有匹配路径的 peer 观测权重 / 本前缀导出观测权重」判断主导性。不能用某一条
+  // 完整代表路径代替全球 peer 分布：不同观察者的左侧 AS 天然会把同一主流走廊拆成许多路径。
+  const weightedPath = hasPath && !!S.meta?.has_path_weights
+  let matchExpr = null
+  if (weightedPath) {
+    matchExpr = pq.sqlMatchedPeers('paths_blob')
+    const quick = pq.sqlIncludeCond('paths_blob')
+    if (quick) w.push(quick)
+    w.push(`(${matchExpr}) > 0`)
+    cols += `, ${matchExpr} AS matched_peers, observed_peers`
+  } else if (hasPath) {
+    for (const c of pq.sqlConds('paths_blob')) w.push(c)
+  }
   if (originAsns) w.push(originAsns.length === 1 ? `origin_asn = ${originAsns[0]}` : `origin_asn IN (${originAsns.join(',')})`)
   // MOAS: pathsearch 现按 (前缀,origin) 多行 -> 纯 AS_PATH 搜索(不按 origin)需 is_primary 去重回每前缀一行;
   // 按 origin 搜索时不去重(要的就是该 origin 那行, 含次要 origin)。仅新数据(has_moas)有此列。
   if (isGlobal && !originAsns && S.meta?.has_moas) w.push('is_primary')
   // 低可见阈值按 family 取(结果可能混 v4+v6): prefix 含 ':' 用 v6 阈值, 否则 v4。
   if (!inclLow) w.push(`n_paths >= (CASE WHEN prefix LIKE '%:%' THEN ${Math.ceil(lowCutFor(true))} ELSE ${Math.ceil(lowCutFor(false))} END)`)
-  const bestExpr = pq.sqlBest('best_path')
-  const order = (bestExpr ? `(${bestExpr}) DESC, ` : '') + 'n_paths DESC'
+  const bestExpr = !weightedPath && pq.sqlBest('best_path')
+  const order = weightedPath
+    ? 'matched_peers::DOUBLE / NULLIF(observed_peers, 0) DESC, matched_peers DESC, n_paths DESC'
+    : (bestExpr ? `(${bestExpr}) DESC, ` : '') + 'n_paths DESC'
   const where = w.length ? w.join(' AND ') : ''
   const off = (S.page || 0) * limit
   const sql = `SELECT ${cols} FROM ${fromExpr} ${where ? 'WHERE ' + where : ''} ORDER BY ${order} LIMIT ${limit + 1}${off ? ` OFFSET ${off}` : ''}`
@@ -179,16 +193,30 @@ export async function runSearch(keepPage = false) {
   if (slow) progressDone(); else S.busy = false
   const more = rows.length > limit; if (more) rows = rows.slice(0, limit)
   S.more = more
-  rows.forEach(r => { r._best = !!(pq.hasInclude && pq.testStr(r.best_path)) })
-  rows.sort((a, b) => (pq.hasInclude ? (b._best ? 1 : 0) - (a._best ? 1 : 0) : 0) || cmpBy('n_paths', -1, a, b))
+  rows.forEach(r => {
+    if (weightedPath) {
+      r.matched_peers = Number(r.matched_peers) || 0
+      r.observed_peers = Number(r.observed_peers) || 0
+      r.match_ratio = r.observed_peers ? r.matched_peers / r.observed_peers : 0
+      r._dominant = r.matched_peers * 2 > r.observed_peers
+      r._best = r._dominant // 兼容行高亮 class；语义已改为「多数观测匹配」
+    } else {
+      r._best = !!(pq.hasInclude && pq.testStr(r.best_path))
+    }
+  })
+  rows.sort((a, b) => weightedPath
+    ? cmpBy('match_ratio', -1, a, b) || cmpBy('matched_peers', -1, a, b) || cmpBy('n_paths', -1, a, b)
+    : (pq.hasInclude ? (b._best ? 1 : 0) - (a._best ? 1 : 0) : 0) || cmpBy('n_paths', -1, a, b))
   S.rows = rows
   S.mode = cc ? 'country' : 'global'
-  S.sortKey = 'n_paths'; S.sortDir = -1
+  S.sortKey = weightedPath ? 'match_ratio' : 'n_paths'; S.sortDir = -1
 
   const N = `${rows.length}${more ? '+' : ''}`
   const scope = cc ? `${ccLabel(cc)}${city ? ' · ' + city : ''}` : t('global')
   const oTxt = originAsns ? ` · ${originLabel(originAsns, nameHit, nameQ, personName)}` : ''
-  const pTxt = hasPath ? (S.lang === 'zh' ? ` · path [${pq.summary()}]${pq.hasInclude ? '（★=落在最优路径）' : ''}` : ` · path [${pq.summary()}]${pq.hasInclude ? ' (★=on best path)' : ''}`) : ''
+  const pTxt = hasPath ? (S.lang === 'zh'
+    ? ` · path [${pq.summary()}]${weightedPath ? '（★=超过半数 peer 观测匹配）' : pq.hasInclude ? '（★=代表路径命中）' : ''}`
+    : ` · path [${pq.summary()}]${weightedPath ? ' (★=matched by a majority of peer observations)' : pq.hasInclude ? ' (★=representative path matched)' : ''}`) : ''
   S.msg = (S.lang === 'zh'
     ? `${scope}：显示 ${N} 个前缀${oTxt}${pTxt}` + (!inclLow ? ' · 已隐藏低可见' : '')
     : `${scope}: ${N} prefixes${oTxt}${pTxt}` + (!inclLow ? ' · low-vis hidden' : ''))
@@ -727,7 +755,8 @@ export async function scanNeighbors(asn) {
     const acc = new Map()
     for (const r of rows) {
       for (const path of String(r.paths_blob || '').trim().split('|')) {
-        accPath(acc, path.trim().split(/\s+/).map(Number), asn, r.prefix)
+        // 新加权 blob 记录以 @n_peers@ 开头；旧数据无此前缀。邻接扫描只消费 AS_PATH 本体。
+        accPath(acc, path.replace(/^@\d+@/, '').trim().split(/\s+/).map(Number), asn, r.prefix)
       }
     }
     S.asnView = { ...S.asnView, neigh: { ...groupRelations(asn, acc), scanned: rows.length, capped: rows.length >= 20000 } }
@@ -1027,6 +1056,9 @@ function colDefs() {
     { key: 'loc', label: t('col_loc'), on: true, val: r => placeLabel(r.province, r.city, r.cc || cc) },
     { key: 'plen', label: t('exp_plen'), on: has('plen'), val: r => r.plen ?? '' },
     { key: 'n_paths', label: t('col_path'), on: true, val: r => r.n_paths ?? 0 },
+    { key: 'matched_peers', label: t('exp_match_peers'), on: has('matched_peers'), val: r => r.matched_peers ?? 0 },
+    { key: 'observed_peers', label: t('exp_observed_peers'), on: has('matched_peers'), val: r => r.observed_peers ?? 0 },
+    { key: 'match_share', label: t('exp_match_share'), on: has('matched_peers'), val: r => r.observed_peers ? (Number(r.matched_peers) / Number(r.observed_peers) * 100).toFixed(2) + '%' : '0.00%' },
     { key: 'rpki', label: t('exp_rpki'), on: has('rpki'), val: r => r.rpki ?? '' },
     { key: 'irr', label: t('exp_irr'), on: has('irr'), val: r => r.irr ?? '' },
     { key: 'moas', label: t('exp_moas'), on: has('n_origins'), val: r => r.n_origins ?? '' },

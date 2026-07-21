@@ -6,6 +6,11 @@ PEER.AS 的功能更新记录。仅记录**面向用户的功能性变更**（�
 Feature-level changelog for PEER.AS. Only **user-facing functional changes** are listed
 (new features, visible behavior changes); pure maintenance/refactors/data refreshes are omitted. Newest first.
 
+## 2026-07-21
+
+- **修正：AS_PATH 搜索改按匹配观测占比判断主导路径。** 搜索结果不再用一条最短完整路径冒充“全球最优路径”，而是汇总所有匹配路径的 peer 观测数，显示“匹配 / 全部”及百分比并据此排序；只有超过半数观测匹配才标星。原星标路径改称“代表观测路径”，不再声称是实际流量路径。
+  **Fixed: AS_PATH search now determines dominance by matching-observation share.** Results no longer treat one shortest full path as a “global best path”; they aggregate peer observations across every matching path, show the matched/total count and percentage, and rank by that share. A star now requires a strict majority. The former best-path marker is renamed “representative observed path” and no longer claims to describe actual traffic.
+
 ## 2026-07-12
 
 - **改进：新增 AS4837 美国路由视角。** 在原有 4 个公开全表采集点之外，新增 AS4837 美国网络内部视角，补充其可见前缀的回程 AS_PATH；数据源列表同时展示各视角的快照新鲜度。

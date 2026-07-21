@@ -3,7 +3,7 @@
 按 family 出**两套**(v4 无后缀 / v6 带 `_v6`), 前端按输入 IP 的 family 路由或 union(见 docs/DUCKDB_V6_REFACTOR.md):
   prefixes{,_v6}/   全部前缀, 按 ip_start 排序(子网搜索/父子段/pid 详情)。即 ipindex。
   paths{,_v6}/      每前缀去重 AS_PATH(<=PATH_CAP), 按 pid 排序(insight 抽屉)。
-  pathsearch{,_v6}/ 全表一行/前缀(paths_blob+origin_asn+cc), 按 origin_asn 排序(不选国家时全局搜索)。
+  pathsearch{,_v6}/ 全表一行/前缀(加权 paths_blob+origin_asn+cc), 按 origin_asn 排序(不选国家时全局搜索)。
   geo{,_v6}/<cc>/   国家 working-set: 每 (pid,cc,city) 一行 + segs(本段范围) + paths_blob + prefix。
   meta.json         version + files(含 _v6) + counts + dfz_ref{,_v6} + countries + country_names(country_dim) +
                     cities + asn_names/ops + asn org(asn_dim) + site_base。
@@ -41,7 +41,7 @@ def _subtract(s: int, e: int, holes: list) -> list[tuple]:
         out.append((cur, e))
     return out
 
-PATH_CAP = 128  # 每前缀导出的去重 AS_PATH 上限(按 path_len ASC, n_peers DESC 取头部)。
+PATH_CAP = 128  # 每前缀导出的去重 AS_PATH 上限(按 n_peers DESC, path_len ASC 取头部)。
                 # 4 采集点(rrc01/06/03+route-views2)下 n_distinct_paths max≈94/mean≈69 -> 128 ship 全量且留头room。
                 # 注: 这是**会生效的截顶杠杆** —— 再加采集点冲破 128 时此处会静默丢尾, 届时要么提 cap 要么记 log。
                 # (24 旧值会截断 ~93% 前缀的路径列表/路由图/AS_PATH 搜索, 掩盖多采集点的路径多样性)。
@@ -186,8 +186,8 @@ def _segments_duck(con, cfg: dict, family: int, gindex) -> list[tuple]:
 # geo working-set 导出(carve 切段 -> 逐国家 parquet) —— 仅 geo profile(peeras)用; dn42 不调。
 # ----------------------------------------------------------------------------
 def _carve_geo_dirs(con, cfg: dict, pq: Path, family: int, suffix: str, geodir: str) -> tuple[list, int]:
-    """geo{geodir}/<cc>: carve 切段 -> seg 表 -> 每 (cc,city,pid) 一行 segs + paths_blob + prefix, 逐国家写。
-    返回 (ccs, n_segs)。依赖已建好的 pp{suffix} 表(每前缀 paths_blob/best_path)。"""
+    """geo{geodir}/<cc>: carve 切段 -> seg 表 -> 每 (cc,city,pid) 一行 segs + 加权路径 + prefix, 逐国家写。
+    返回 (ccs, n_segs)。依赖已建好的 pp{suffix} 表。"""
     gindex = geoip.GeoIndexDuck(con, family)
     util.log(f"  geo v{family}: carve 切段(算 CIDR)...")
     segs = _segments_duck(con, cfg, family, gindex)   # 每行已是一个 (pid,cc,city) + 空格分隔 CIDR 串
@@ -212,7 +212,7 @@ def _carve_geo_dirs(con, cfg: dict, pq: Path, family: int, suffix: str, geodir: 
         SELECT g.cc, g.city, g.province, g.pid, pfx.prefix, g.plen, g.origin_asn,
                pfx.n_origins, g.n_paths,
                COALESCE(rs.rpki,0)::UTINYINT AS rpki, COALESCE(irs.irr,0)::UTINYINT AS irr,  -- 代表 origin 的 RPKI/IRR
-               g.segs, pp.paths_blob, pp.best_path
+               g.segs, pp.paths_blob, pp.observed_peers, pp.best_path
         FROM seg g
         LEFT JOIN pp{suffix} pp ON pp.pid = g.pid
         LEFT JOIN prefix pfx ON pfx.pid = g.pid
@@ -265,7 +265,9 @@ def _export_family(con, cfg: dict, pq: Path, family: int, geo_on: bool = True, h
     (pq / f"paths{suffix}").mkdir(parents=True, exist_ok=True)
     # path_str / path_arr 用 **path_clean**(折叠 prepend) —— 子序列搜索与邻接(asn_neigh)口径不变。
     # path_arr_raw 仅在含 prepend(raw≠clean)时带原始数组(供详情抽屉展示 AS×N), 否则 NULL(parquet 近乎零开销)。
-    # is_best / rn 按 path_len(**原始**长度)排序: prepend 拉长的路径自然下沉, best=最短真实 AS_PATH。
+    # is_best 是供详情/路由图使用的「代表观测路径」: 先取完整路径中 peer 观测最多者, 再以原始长度和
+    # 路径串稳定破同票。不同 peer 的 BGP best path 不能聚合成一条「全球最优路径」; AS_PATH 搜索的
+    # 主导性另按所有匹配路径的 peer 权重之和计算, 不能复用 is_best。
     con.execute(f"""
         COPY (
           WITH p AS (
@@ -275,7 +277,10 @@ def _export_family(con, cfg: dict, pq: Path, family: int, geo_on: bool = True, h
                         ELSE list_transform(string_split(path_raw,' '), x -> TRY_CAST(x AS BIGINT))
                    END AS path_arr_raw,
                    path_len, n_peers,
-                   row_number() OVER (PARTITION BY pid ORDER BY path_len ASC, n_peers DESC) AS rn
+                   row_number() OVER (
+                     PARTITION BY pid
+                     ORDER BY n_peers DESC, path_len ASC, path_clean ASC, path_raw ASC
+                   ) AS rn
             FROM pathobs WHERE family={family}
           )
           SELECT pid, path_str, path_arr, path_arr_raw, path_len, n_peers, (rn=1) AS is_best
@@ -283,11 +288,15 @@ def _export_family(con, cfg: dict, pq: Path, family: int, geo_on: bool = True, h
         ) TO '{pq}/paths{suffix}' (FORMAT parquet, FILE_SIZE_BYTES '{FILE_SIZE}', OVERWRITE_OR_IGNORE);
     """)
 
-    # pp{suffix}: 每前缀 paths_blob(连续序列 LIKE 用) + best_path。从已写的 paths parquet 聚合(列存可溢出)。
+    # pp{suffix}: paths_blob 每条记录编码为 "@n_peers@ path"。权重与路径放在同一记录，既不会因两个
+    # 无序聚合错位，也避免 group 内 ORDER BY 在百万前缀规模吃光内存。前端汇总所有匹配记录的权重，
+    # 得 matched_peers / observed_peers；不再误拿某一条完整短路径当作「全球最优」。
     con.execute(f"DROP TABLE IF EXISTS pp{suffix};")
     con.execute(f"""
         CREATE TABLE pp{suffix} AS
-        SELECT pid, string_agg(path_str, '|') AS paths_blob,
+        SELECT pid,
+               string_agg('@' || n_peers::VARCHAR || '@' || path_str, '|') AS paths_blob,
+               sum(n_peers)::BIGINT AS observed_peers,
                any_value(path_str) FILTER (WHERE is_best) AS best_path
         FROM read_parquet('{pq}/paths{suffix}/*.parquet') GROUP BY pid;
     """)
@@ -312,7 +321,7 @@ def _export_family(con, cfg: dict, pq: Path, family: int, geo_on: bool = True, h
                  po.o_asn AS origin_asn, p.n_origins, p.n_paths,
                  (po.o_asn IS NOT DISTINCT FROM p.origin_asn) AS is_primary,
                  COALESCE(rs.rpki,0)::UTINYINT AS rpki, COALESCE(irs.irr,0)::UTINYINT AS irr,  -- 该 origin 的 RPKI/IRR 状态
-                 pp.paths_blob, pp.best_path
+                 pp.paths_blob, pp.observed_peers, pp.best_path
           FROM pgeo p
           JOIN po ON po.pid = p.pid
           LEFT JOIN pp{suffix} pp ON pp.pid = p.pid
@@ -826,6 +835,9 @@ def export(cfg: dict, con, out_dir: str = "dist") -> dict:
         # MOAS v2: pathsearch 按 (前缀,origin) 多行 + is_primary; prefixes 带 origin_asns/origin_npaths 数组。
         # 门控: 详情抽屉完整 origin 列表、纯 path 搜索 is_primary 去重、按次要 origin 搜索命中。
         "has_moas": True,
+        # 加权 AS_PATH 搜索: pathsearch/geo 的 paths_blob 每条记录内嵌 peer 权重，并带 observed_peers。
+        # 新前端据此显示/排序「匹配 peer 观测占比」; 旧数据缺标志时安全回退旧查询。
+        "has_path_weights": True,
         # RPKI ROA / IRR route 验证: 列表/详情徽章 + 详情 IRR 区块。数据缺失(import 没跑/开关关)即 False, 前端不 SELECT 该列。
         "has_rpki": has_rpki,
         "has_irr": has_irr,
